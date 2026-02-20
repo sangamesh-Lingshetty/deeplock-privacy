@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "DeepLock",
+  "version": "1.2",
+  "description": "Block distracting sites. Cannot be stopped once started.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback"
+  ],
+  "host_permissions": [
+    "*://*.instagram.com/*",
+    "*://*.twitter.com/*",
+    "*://*.x.com/*",
+    "*://*.youtube.com/*",
+    "*://*.reddit.com/*",
+    "*://*.facebook.com/*",
+    "*://*.tiktok.com/*",
+    "*://*.netflix.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["blocked.html", "blocked.js", "pause.html", "pause.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <!-- Section 1: Focus Status -->
+      <div id="mainSection">
+        <h1>DeepLock</h1>
+        <p class="subtitle">Block distractions. No escape.</p>
+
+        <div id="inactive">
+          <div class="buttons">
+            <button class="time-btn" data-min="30">30 min</button>
+            <button class="time-btn" data-min="60">60 min</button>
+            <button class="time-btn" data-min="90">90 min</button>
+          </div>
+
+          <input
+            id="focusIntent"
+            type="text"
+            placeholder="What are you committing to?"
+            maxlength="80"
+          />
+
+          <button id="start" disabled>Select time first</button>
+
+          <p class="info">Blocks: Instagram, X, YouTube, Reddit</p>
+        </div>
+
+        <div id="active" style="display: none">
+          <h2 id="timer">--:--</h2>
+          <p id="blockedCount">Sites are blocked</p>
+          <p id="blockedList" class="blocked-list"></p>
+          <p class="warning">Cannot stop</p>
+        </div>
+      </div>
+
+      <hr class="divider" />
+
+      <!-- Section 2: Focus Stats -->
+      <div id="statsSection" class="section stats-section">
+        <h4>Your Focus Stats</h4>
+        <p id="sessionCount">Sessions completed: 0</p>
+        <p id="focusTime">Total focus time: 0 minutes</p>
+      </div>
+
+      <hr class="divider" />
+
+      <!-- Section 3: DeepLock Pro -->
+      <div id="proSection" class="section pro-section">
+        <h4>Deeplock Pro (Coming Soon)</h4>
+        <ul>
+          <li> Custom Site Selection </li>
+          <li> Recurring Focus Schedule </li>
+          <li> Custom Time Duration </li>
+          <li> Focus Stats Dashboard </li>
+          <li> Streak Tracking System </li>
+        </ul>
+        <button id="upgradeBtn">Unlock Deeplock Pro</button>
+      </div>
+
+      <hr class="divider" />
+
+      <!-- Section 4: Feedback -->
+      <div id="footerSection" class="section feedback-section">
+        <button id="feedbackBtn">Send Feedback</button>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

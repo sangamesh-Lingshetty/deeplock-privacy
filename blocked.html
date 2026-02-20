@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        background: #000;
+        color: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        text-align: center;
+      }
+
+      .container {
+        max-width: 500px;
+        padding: 40px;
+      }
+
+      .lock-icon {
+        font-size: 80px;
+        margin-bottom: 24px;
+        animation: pulse 2s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.05);
+        }
+      }
+
+      h1 {
+        font-size: 36px;
+        margin-bottom: 16px;
+        color: #fff;
+      }
+
+      p {
+        font-size: 18px;
+        color: #888;
+        line-height: 1.6;
+      }
+
+      .timer {
+        margin-top: 32px;
+        padding: 20px;
+        background: #1a1a1a;
+        border-radius: 12px;
+      }
+
+      .timer-text {
+        font-size: 14px;
+        color: #666;
+        margin-bottom: 8px;
+      }
+
+      .time {
+        font-size: 32px;
+        font-weight: 700;
+        color: #007aff;
+      }
+
+      .quote {
+        margin-top: 40px;
+        font-size: 16px;
+        color: #555;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="lock-icon">🔒</div>
+      <h1>Site Blocked</h1>
+      <p>
+        This site is locked during your focus session.<br />Get back to work.
+      </p>
+
+      <p style="margin-top: 20px; color: #aaa">You committed to:</p>
+      <h2 id="intentText" style="margin-top: 8px"></h2>
+
+      <div class="timer">
+        <div class="timer-text">Time remaining</div>
+        <div class="time" id="timer">--:--</div>
+      </div>
+
+      <p class="quote">
+        "Discipline is choosing between what you want now and what you want
+        most."
+      </p>
+    </div>
+
+    <script src="blocked.js"></script>
+  </body>
+</html>
