@@ -2,107 +2,234 @@
 <html>
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Blocked — DeepLock</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
     <style>
-      * {
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
         margin: 0;
         padding: 0;
-        box-sizing: border-box;
       }
-
+      :root {
+        --bg: #080808;
+        --accent: #3b82f6;
+        --red: #ef4444;
+        --mono: "Space Mono", monospace;
+        --sans: "DM Sans", sans-serif;
+      }
       body {
-        background: #000;
+        background: var(--bg);
         color: #fff;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-family: var(--sans);
         display: flex;
         align-items: center;
         justify-content: center;
-        height: 100vh;
+        min-height: 100vh;
         text-align: center;
+        overflow: hidden;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(239, 68, 68, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(239, 68, 68, 0.03) 1px, transparent 1px);
+        background-size: 48px 48px;
+      }
+      .wrap {
+        position: relative;
+        z-index: 1;
+        max-width: 520px;
+        padding: 40px 32px;
       }
 
-      .container {
-        max-width: 500px;
-        padding: 40px;
+      .lock-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        background: rgba(239, 68, 68, 0.08);
+        border: 1px solid rgba(239, 68, 68, 0.2);
+        border-radius: 20px;
+        padding: 5px 16px;
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        color: var(--red);
+        text-transform: uppercase;
+        margin-bottom: 32px;
       }
-
-      .lock-icon {
-        font-size: 80px;
-        margin-bottom: 24px;
-        animation: pulse 2s ease-in-out infinite;
+      .lock-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--red);
+        animation: blink 1.5s ease-in-out infinite;
+        flex-shrink: 0;
       }
-
-      @keyframes pulse {
+      @keyframes blink {
         0%,
         100% {
-          transform: scale(1);
+          opacity: 1;
         }
         50% {
-          transform: scale(1.05);
+          opacity: 0.2;
         }
       }
 
       h1 {
-        font-size: 36px;
-        margin-bottom: 16px;
-        color: #fff;
-      }
-
-      p {
-        font-size: 18px;
-        color: #888;
-        line-height: 1.6;
-      }
-
-      .timer {
-        margin-top: 32px;
-        padding: 20px;
-        background: #1a1a1a;
-        border-radius: 12px;
-      }
-
-      .timer-text {
-        font-size: 14px;
-        color: #666;
-        margin-bottom: 8px;
-      }
-
-      .time {
-        font-size: 32px;
+        font-family: var(--mono);
+        font-size: 52px;
         font-weight: 700;
-        color: #007aff;
+        letter-spacing: -2px;
+        margin-bottom: 12px;
+        line-height: 1;
+      }
+      h1 span {
+        color: var(--red);
       }
 
-      .quote {
-        margin-top: 40px;
-        font-size: 16px;
+      .sub {
+        font-size: 15px;
+        color: #3a3a3a;
+        margin-bottom: 32px;
+        line-height: 1.7;
+      }
+
+      .intent-box {
+        background: #0f0f0f;
+        border: 1px solid #1e1e1e;
+        border-radius: 12px;
+        padding: 14px 24px;
+        margin-bottom: 20px;
+      }
+      .intent-label {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        color: #333;
+        margin-bottom: 6px;
+      }
+      .intent-text {
+        font-size: 18px;
+        font-weight: 600;
+        color: #fff;
+        min-height: 24px;
+      }
+
+      /* sites blocked pill */
+      .sites-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(239, 68, 68, 0.06);
+        border: 1px solid rgba(239, 68, 68, 0.15);
+        border-radius: 20px;
+        padding: 4px 14px;
+        margin-bottom: 20px;
+        font-size: 11px;
         color: #555;
+      }
+      .sites-dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--red);
+      }
+      .sites-num {
+        font-family: var(--mono);
+        font-weight: 700;
+        color: var(--red);
+      }
+
+      .timer-box {
+        display: inline-block;
+        background: #0a0a0a;
+        border: 1px solid #1a1a1a;
+        border-radius: 14px;
+        padding: 18px 40px;
+        margin-bottom: 28px;
+      }
+      .timer-label {
+        font-size: 10px;
+        color: #333;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        margin-bottom: 6px;
+      }
+      .timer-val {
+        font-family: var(--mono);
+        font-size: 42px;
+        font-weight: 700;
+        color: var(--accent);
+        letter-spacing: -1px;
+        line-height: 1;
+      }
+      .timer-val.done {
+        color: #22c55e;
+        font-size: 28px;
+      }
+
+      .site-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        justify-content: center;
+        margin-bottom: 24px;
+      }
+      .quote {
+        font-size: 12px;
+        color: #2a2a2a;
         font-style: italic;
+        line-height: 1.8;
       }
     </style>
   </head>
   <body>
-    <div class="container">
-      <div class="lock-icon">🔒</div>
-      <h1>Site Blocked</h1>
-      <p>
-        This site is locked during your focus session.<br />Get back to work.
+    <div class="wrap">
+      <div class="lock-badge">
+        <span class="lock-dot"></span>
+        DEEPLOCK ACTIVE
+      </div>
+
+      <h1>Get Back<br />To <span>Work.</span></h1>
+
+      <p class="sub">
+        This site is blocked. The session cannot be stopped.<br />
+        You made a commitment.
       </p>
 
-      <p style="margin-top: 20px; color: #aaa">You committed to:</p>
-      <h2 id="intentText" style="margin-top: 8px"></h2>
+      <div class="intent-box">
+        <div class="intent-label">You're focused on</div>
+        <div class="intent-text" id="intentText"></div>
+      </div>
 
-      <div class="timer">
-        <div class="timer-text">Time remaining</div>
-        <div class="time" id="timer">--:--</div>
+      <div class="sites-pill">
+        <span class="sites-dot"></span>
+        <span class="sites-num" id="siteCount">—</span>
+        <span>sites blocked right now</span>
+      </div>
+
+      <!-- ACTUAL SITE NAMES -->
+      <div class="site-tags" id="siteNameList"></div>
+
+      <div class="timer-box">
+        <div class="timer-label">Time Remaining</div>
+        <div class="timer-val" id="timerVal">--:--</div>
       </div>
 
       <p class="quote">
-        "Discipline is choosing between what you want now and what you want
-        most."
+        "The successful person has the habit of doing things failures don't like
+        to do."
       </p>
     </div>
-
     <script src="blocked.js"></script>
   </body>
 </html>

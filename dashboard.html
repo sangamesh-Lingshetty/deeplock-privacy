@@ -1,0 +1,482 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>DeepLock — Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="dashboard.css" />
+  </head>
+  <body>
+    <div class="dash">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-icon">⬛</span
+          ><span class="brand-name">DeepLock</span>
+        </div>
+        <div class="pro-tag">PRO</div>
+        <nav class="nav">
+          <a class="nav-item active" data-tab="overview">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
+              <rect x="1" y="1" width="5.5" height="5.5" rx="1" />
+              <rect
+                x="8.5"
+                y="1"
+                width="5.5"
+                height="5.5"
+                rx="1"
+                opacity=".5"
+              />
+              <rect
+                x="1"
+                y="8.5"
+                width="5.5"
+                height="5.5"
+                rx="1"
+                opacity=".5"
+              />
+              <rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1" />
+            </svg>
+            Overview
+          </a>
+          <a class="nav-item" data-tab="history">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
+              <path
+                d="M7.5 1a6.5 6.5 0 100 13A6.5 6.5 0 007.5 1zM7 4v4l2.5 2.5-.7.7L6 8.5V4h1z"
+              />
+            </svg>
+            History
+          </a>
+          <a class="nav-item" data-tab="streaks">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
+              <path
+                d="M7.5 0C7.5 0 4 5 4 8.5a3.5 3.5 0 007 0C11 5 7.5 0 7.5 0z"
+              />
+            </svg>
+            Streaks
+          </a>
+          <a class="nav-item" data-tab="sites">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
+              <circle
+                cx="7.5"
+                cy="7.5"
+                r="6"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.2"
+              />
+              <line
+                x1="1.5"
+                y1="7.5"
+                x2="13.5"
+                y2="7.5"
+                stroke="currentColor"
+                stroke-width="1.2"
+              />
+              <path
+                d="M7.5 1.5c-2 2-2 8 0 10M7.5 1.5c2 2 2 8 0 10"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.2"
+              />
+            </svg>
+            Blocked Sites
+          </a>
+          <a class="nav-item" data-tab="profile">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
+              <path
+                d="M7.5 1a3 3 0 110 6 3 3 0 010-6zm0 8c3.3 0 6 1.3 6 3v1h-12v-1c0-1.7 2.7-3 6-3z"
+              />
+            </svg>
+            Profile
+          </a>
+        </nav>
+        <div class="sidebar-footer">
+          <div class="session-status">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusLabel">No active session</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <!-- OVERVIEW -->
+        <div id="tab-overview" class="tab-content active">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Your Focus Report</h1>
+              <p class="page-sub" id="dateRange">Loading...</p>
+            </div>
+            <div class="score-pill">
+              <span class="score-num" id="weekScore">—</span
+              ><span class="score-label">week score</span>
+            </div>
+          </div>
+          <div class="big-stats">
+            <div class="big-stat">
+              <div class="big-stat-val" id="totalHours">—</div>
+              <div class="big-stat-label">Total Hours Focused</div>
+            </div>
+            <div class="big-stat highlight">
+              <div class="big-stat-val" id="totalSessions">—</div>
+              <div class="big-stat-label">Sessions Completed</div>
+            </div>
+            <div class="big-stat">
+              <div class="big-stat-val" id="blockedAttempts">—</div>
+              <div class="big-stat-label">Distractions Blocked</div>
+            </div>
+            <div class="big-stat">
+              <div class="big-stat-val streak-val" id="currentStreak">—</div>
+              <div class="big-stat-label">Current Streak 🔥</div>
+            </div>
+          </div>
+          <div class="card chart-card">
+            <div class="card-header">
+              <div class="card-title">Daily Focus — Last 7 Days</div>
+              <div class="chart-legend">
+                <span class="legend-dot"></span
+                ><span class="legend-label">Minutes focused</span>
+              </div>
+            </div>
+            <div class="bar-chart" id="barChart"></div>
+            <div class="bar-labels" id="barLabels"></div>
+          </div>
+          <div class="cards-row">
+            <div class="card">
+              <div class="card-title" style="margin-bottom: 14px">
+                Today's Summary
+              </div>
+              <div class="today-grid">
+                <div class="today-item">
+                  <div class="today-num" id="todayMins">0</div>
+                  <div class="today-label">min focused</div>
+                </div>
+                <div class="today-item">
+                  <div class="today-num" id="todaySessions">0</div>
+                  <div class="today-label">sessions</div>
+                </div>
+              </div>
+              <div class="today-bar-wrap">
+                <div class="today-bar-fill" id="todayBarFill"></div>
+              </div>
+              <div class="today-bar-label">Goal: 120 min / day</div>
+            </div>
+            <div class="card">
+              <div class="card-title" style="margin-bottom: 14px">
+                All-Time Records
+              </div>
+              <div class="record-list">
+                <div class="record-item">
+                  <span class="record-label">Longest Streak</span
+                  ><span class="record-val" id="longestStreak">—</span>
+                </div>
+                <div class="record-item">
+                  <span class="record-label">Best Day</span
+                  ><span class="record-val" id="bestDay">—</span>
+                </div>
+                <div class="record-item">
+                  <span class="record-label">Avg Session</span
+                  ><span class="record-val" id="avgSession">—</span>
+                </div>
+                <div class="record-item">
+                  <span class="record-label">Total Hours</span
+                  ><span class="record-val" id="totalHoursAll">—</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card motivation-card">
+            <div class="motivation-quote" id="motivationQuote">Loading...</div>
+          </div>
+        </div>
+
+        <!-- HISTORY -->
+        <div id="tab-history" class="tab-content">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Session History</h1>
+              <p class="page-sub">Every session — last 90 days</p>
+            </div>
+            <div class="sync-source-badge" id="historySource">LOCAL</div>
+          </div>
+          <div class="card" style="padding: 0; overflow: hidden">
+            <div class="history-header-row">
+              <span>Date</span><span>Intent</span><span>Duration</span
+              ><span>Status</span>
+            </div>
+            <div id="historyList" class="history-list"></div>
+          </div>
+        </div>
+
+        <!-- STREAKS -->
+        <div id="tab-streaks" class="tab-content">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Streak Tracker</h1>
+              <p class="page-sub">
+                Consistency is the only metric that matters
+              </p>
+            </div>
+          </div>
+          <div class="streak-hero">
+            <div class="streak-fire">🔥</div>
+            <div class="streak-number" id="streakHeroNum">0</div>
+            <div class="streak-label">day streak</div>
+            <div class="streak-sub" id="streakSub">
+              Start a session to begin your streak.
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title" style="margin-bottom: 16px">
+              Activity — Last 28 Days
+            </div>
+            <div class="heatmap" id="heatmap"></div>
+            <div class="heatmap-legend">
+              <span style="color: #555; font-size: 11px">Less</span>
+              <span class="heat-cell heat-0"></span
+              ><span class="heat-cell heat-1"></span
+              ><span class="heat-cell heat-2"></span>
+              <span class="heat-cell heat-3"></span
+              ><span class="heat-cell heat-4"></span
+              ><span class="heat-cell heat-5"></span>
+              <span style="color: #555; font-size: 11px">More</span>
+            </div>
+          </div>
+          <div class="cards-row" style="grid-template-columns: 1fr 1fr 1fr">
+            <div class="card" style="text-align: center">
+              <div
+                class="streak-stat-num"
+                id="ssCurrentStreak"
+                style="color: #f97316"
+              >
+                0
+              </div>
+              <div class="streak-stat-label">Current Streak</div>
+            </div>
+            <div class="card" style="text-align: center">
+              <div
+                class="streak-stat-num"
+                id="ssLongestStreak"
+                style="color: #3b82f6"
+              >
+                0
+              </div>
+              <div class="streak-stat-label">Longest Streak</div>
+            </div>
+            <div class="card" style="text-align: center">
+              <div class="streak-stat-num" id="ssActiveDays">0</div>
+              <div class="streak-stat-label">Active Days</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BLOCKED SITES -->
+        <div id="tab-sites" class="tab-content">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Blocked Sites</h1>
+              <p class="page-sub">
+                Control what gets blocked during your sessions
+              </p>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom: 16px">
+            <div class="sites-section-title">Always blocked (default)</div>
+            <div class="default-sites-grid" id="defaultSitesGrid"></div>
+          </div>
+
+          <div class="card">
+            <div class="sites-section-header">
+              <div class="sites-section-title">Your custom sites</div>
+              <button class="add-site-cta" id="toggleManualBtn">
+                + Add site
+              </button>
+            </div>
+
+            <div class="popular-label">Quick add:</div>
+            <div class="popular-grid" id="popularGrid"></div>
+
+            <div class="manual-add-row" id="manualAddRow" style="display: none">
+              <input
+                id="manualSiteInput"
+                class="manual-input"
+                placeholder="e.g. linkedin.com"
+              />
+              <button class="add-site-cta" id="manualAddBtn">Add</button>
+              <button class="cancel-add-btn" id="cancelManualBtn">✕</button>
+            </div>
+
+            <div id="customSitesList" class="custom-sites-list">
+              <div class="empty-sites">No custom sites yet.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PROFILE -->
+        <div id="tab-profile" class="tab-content">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Profile</h1>
+              <p class="page-sub">Account, sync, and license</p>
+            </div>
+          </div>
+
+          <!-- GOOGLE AUTH -->
+          <div class="card profile-card" style="margin-bottom: 16px">
+            <div class="profile-section-title">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"
+                />
+              </svg>
+              Google Account
+            </div>
+
+            <div id="profileSignedOut">
+              <p class="profile-desc">
+                Connect Google to sync your streak and session history across
+                devices. Your data stays safe even if you reinstall Chrome.
+              </p>
+              <button class="google-signin-btn" id="dashSignInBtn">
+                <svg width="16" height="16" viewBox="0 0 24 24">
+                  <path
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                    fill="#4285F4"
+                  />
+                  <path
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                    fill="#34A853"
+                  />
+                  <path
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
+                    fill="#FBBC05"
+                  />
+                  <path
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                    fill="#EA4335"
+                  />
+                </svg>
+                Sign in with Google
+              </button>
+              <div
+                id="dashAuthStatus"
+                style="margin-top: 10px; font-size: 12px; color: #666"
+              ></div>
+            </div>
+
+            <div id="profileSignedIn" style="display: none">
+              <div class="profile-user-row">
+                <div class="profile-avatar" id="profileAvatar">?</div>
+                <div class="profile-user-info">
+                  <div class="profile-email" id="profileEmail">—</div>
+                  <div class="profile-sync-live">
+                    <span class="sync-live-dot"></span>Syncing automatically
+                  </div>
+                </div>
+                <button class="signout-btn" id="dashSignOutBtn">
+                  Sign out
+                </button>
+              </div>
+              <div class="sync-stats-row">
+                <div class="sync-stat">
+                  <span class="sync-stat-val" id="cloudSessions">—</span
+                  ><span class="sync-stat-label">sessions synced</span>
+                </div>
+                <div class="sync-stat-div"></div>
+                <div class="sync-stat">
+                  <span class="sync-stat-val" id="cloudStreak">—</span
+                  ><span class="sync-stat-label">day streak saved</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LICENSE -->
+          <div class="card profile-card" style="margin-bottom: 16px">
+            <div class="profile-section-title">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
+                />
+              </svg>
+              Pro License
+            </div>
+            <div class="license-active-row">
+              <span class="license-dot"></span
+              ><span class="license-active-text">Active — DeepLock Pro</span>
+            </div>
+            <div class="license-key-row" id="licenseKeyRow">—</div>
+          </div>
+
+          <!-- SUPPORT -->
+          <div class="card profile-card" style="margin-bottom: 16px">
+            <div class="profile-section-title">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"
+                />
+              </svg>
+              Support
+            </div>
+            <p class="profile-desc">
+              Having an issue or a feature request? Reach out directly.
+            </p>
+            <a
+              class="google-signin-btn"
+              href="mailto:sangameshlingshetty@gmail.com?subject=DeepLock Support"
+              style="text-decoration: none; display: inline-flex"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"
+                />
+              </svg>
+              sangameshlingshetty@gmail.com
+            </a>
+          </div>
+
+          <!-- DANGER -->
+          <div class="card profile-card danger-card">
+            <div class="profile-section-title danger-title">Danger Zone</div>
+            <div class="danger-row">
+              <div>
+                <div class="danger-label">Reset all local data</div>
+                <div class="danger-desc">
+                  Clears sessions, streak, settings. Cannot be undone.
+                </div>
+              </div>
+              <button class="danger-btn" id="resetDataBtn">Reset</button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script src="supabase.js"></script>
+    <script src="dashboard.js"></script>
+  </body>
+</html>

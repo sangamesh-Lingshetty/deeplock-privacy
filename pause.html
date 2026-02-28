@@ -1,61 +1,175 @@
 <!doctype html>
 <html>
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <style>
-    body {
-      background: #000;
-      color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      text-align: center;
-    }
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pause — DeepLock</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      :root {
+        --bg: #080808;
+        --accent: #3b82f6;
+        --red: #ef4444;
+        --mono: "Space Mono", monospace;
+        --sans: "DM Sans", sans-serif;
+      }
+      body {
+        background: var(--bg);
+        color: #fff;
+        font-family: var(--sans);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        text-align: center;
+        overflow: hidden;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(59, 130, 246, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(59, 130, 246, 0.04) 1px, transparent 1px);
+        background-size: 40px 40px;
+      }
+      .wrap {
+        position: relative;
+        z-index: 1;
+        max-width: 480px;
+        padding: 40px 32px;
+      }
 
-    .container {
-      max-width: 420px;
-      padding: 40px;
-    }
+      .pause-label {
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 4px;
+        color: var(--red);
+        text-transform: uppercase;
+        margin-bottom: 20px;
+        opacity: 0.8;
+      }
+      .countdown-ring {
+        position: relative;
+        width: 110px;
+        height: 110px;
+        margin: 0 auto 28px;
+      }
+      .ring-svg {
+        width: 110px;
+        height: 110px;
+        transform: rotate(-90deg);
+      }
+      .ring-bg-c {
+        fill: none;
+        stroke: #1e1e1e;
+        stroke-width: 7;
+      }
+      .ring-prog {
+        fill: none;
+        stroke: var(--red);
+        stroke-width: 7;
+        stroke-linecap: round;
+        stroke-dasharray: 283;
+        stroke-dashoffset: 0;
+        transition: stroke-dashoffset 0.9s linear;
+      }
+      .ring-num {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--mono);
+        font-size: 32px;
+        font-weight: 700;
+        color: var(--red);
+      }
+      h1 {
+        font-family: var(--mono);
+        font-size: 40px;
+        font-weight: 700;
+        margin-bottom: 14px;
+        letter-spacing: -1px;
+      }
+      .intent-label {
+        font-size: 11px;
+        color: #555;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        margin-bottom: 8px;
+      }
+      .intent-text {
+        font-size: 20px;
+        font-weight: 600;
+        color: #fff;
+        margin-bottom: 28px;
+        min-height: 28px;
+      }
+      .urge-text {
+        font-size: 14px;
+        color: #444;
+        margin-bottom: 28px;
+        line-height: 1.8;
+      }
+      .focus-timer-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        background: #111;
+        border: 1px solid #222;
+        border-radius: 10px;
+        padding: 10px 20px;
+      }
+      .focus-timer-label {
+        font-size: 11px;
+        color: #444;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .focus-time-val {
+        font-family: var(--mono);
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="pause-label">URGE DETECTED</div>
 
-    h1 {
-      font-size: 32px;
-      margin-bottom: 16px;
-    }
+      <div class="countdown-ring">
+        <svg class="ring-svg" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="45" class="ring-bg-c" />
+          <circle cx="50" cy="50" r="45" class="ring-prog" id="ringProg" />
+        </svg>
+        <div class="ring-num" id="countdown">10</div>
+      </div>
 
-    p {
-      color: #aaa;
-      font-size: 18px;
-      line-height: 1.6;
-    }
+      <h1>Pause.</h1>
+      <div class="intent-label">You committed to</div>
+      <div class="intent-text" id="intentText"></div>
+      <div class="urge-text">
+        This urge will pass in seconds.<br />Return to what matters.
+      </div>
+      <div class="focus-timer-row">
+        <span class="focus-timer-label">Session left</span>
+        <span class="focus-time-val" id="focusRemaining">--:--</span>
+      </div>
+    </div>
 
-    .countdown {
-      margin-top: 32px;
-      font-size: 48px;
-      font-weight: bold;
-      color: #007aff;
-    }
-
-    .intent {
-      margin-top: 24px;
-      font-size: 20px;
-      color: #fff;
-    }
-  </style>
-</head>
-
-<body>
-  <div class="container">
-    <h1>Pause.</h1>
-    <p>You chose to focus on:</p>
-    <div class="intent" id="intentText"></div>
-
-    <p style="margin-top: 24px;">This urge will pass.</p>
-    <div class="countdown" id="countdown">10</div>
-  </div>
-
-  <script src="pause.js"></script>
-</body>
+    <script src="pause.js"></script>
+  </body>
 </html>

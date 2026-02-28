@@ -1,25 +1,23 @@
 {
   "manifest_version": 3,
   "name": "DeepLock",
-  "version": "1.2",
-  "description": "Block distracting sites. Cannot be stopped once started.",
+  "version": "3.0",
+  "description": "Block distractions. No escape. Track your discipline.",
   "permissions": [
     "storage",
     "alarms",
     "notifications",
-    "declarativeNetRequest",
-    "declarativeNetRequestFeedback"
+    "declarativeNetRequestWithHostAccess",
+    "declarativeNetRequestFeedback",
+    "tabs",
+    "identity",
+    "management"
   ],
-  "host_permissions": [
-    "*://*.instagram.com/*",
-    "*://*.twitter.com/*",
-    "*://*.x.com/*",
-    "*://*.youtube.com/*",
-    "*://*.reddit.com/*",
-    "*://*.facebook.com/*",
-    "*://*.tiktok.com/*",
-    "*://*.netflix.com/*"
-  ],
+  "oauth2": {
+    "client_id": "523486634791-lnhttaq8cob6q42urt60uaouqag4oko6.apps.googleusercontent.com",
+    "scopes": ["openid", "email", "profile"]
+  },
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
@@ -33,7 +31,17 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["blocked.html", "blocked.js", "pause.html", "pause.js"],
+      "resources": [
+        "blocked.html",
+        "pause.html",
+        "dashboard.html",
+        "dashboard.css",
+        "dashboard.js",
+        "chart.min.js",
+        "pause.js",
+        "blocked.js",
+        "supabase.js"
+      ],
       "matches": ["<all_urls>"]
     }
   ]
