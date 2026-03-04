@@ -201,7 +201,8 @@ async function saveSession({ date, duration, intent, completed }) {
 
 // ================================
 // SYNC FULL STATS TO SUPABASE
-// Called after session completes — pushes everything
+// Called after session completes — pushes streak/session counts
+// Does NOT touch custom_blocked_domains — that's saveCustomDomains's job
 // ================================
 async function syncStats({
   currentStreak,
@@ -212,13 +213,30 @@ async function syncStats({
   const session = await getSession();
   if (!session) return false;
 
-  // Store streak data in settings table as JSON
+  // First get existing settings so we don't overwrite custom domains
+  const existingRes = await sbFetch(
+    `/rest/v1/chomeExstensionSettings?user_id=eq.${session.userId}&select=custom_blocked_domains`,
+    "GET",
+    null,
+    session.accessToken,
+  ).catch(() => null);
+
+  let existingDomains = [];
+  if (existingRes?.ok) {
+    const rows = await existingRes.json();
+    existingDomains = rows[0]?.custom_blocked_domains || [];
+  }
+
   const res = await sbFetch(
     "/rest/v1/chomeExstensionSettings",
     "POST",
     {
       user_id: session.userId,
-      custom_blocked_domains: [],
+      custom_blocked_domains: existingDomains, // preserve existing
+      current_streak: currentStreak,
+      longest_streak: longestStreak,
+      total_sessions: totalSessions,
+      total_focus_minutes: totalFocusMinutes,
       updated_at: new Date().toISOString(),
     },
     session.accessToken,
@@ -300,14 +318,113 @@ async function sbFetch(path, method, body, accessToken, extraHeaders = {}) {
   const headers = {
     "Content-Type": "application/json",
     apikey: SUPABASE_ANON_KEY,
-    ...extraHeaders,
+    Authorization: accessToken ? `Bearer ${accessToken}` : undefined,
   };
-  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+
+  // Apply extra headers explicitly (Prefer must be capital P)
   if (extraHeaders.prefer) headers["Prefer"] = extraHeaders.prefer;
+  if (extraHeaders["Prefer"]) headers["Prefer"] = extraHeaders["Prefer"];
+
+  // Remove undefined values
+  Object.keys(headers).forEach(
+    (k) => headers[k] === undefined && delete headers[k],
+  );
 
   return fetch(`${SUPABASE_URL}${path}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+}
+
+// ================================
+// SCHEDULED SESSIONS
+// Table: chomeExstensionSchedules
+// Columns: id, user_id, intent, scheduled_at (ISO), duration, repeat, active
+// ================================
+async function saveSchedule({
+  id,
+  intent,
+  scheduledAt,
+  duration,
+  repeat,
+  active,
+}) {
+  const session = await getSession();
+  if (!session) {
+    console.warn(
+      "[DeepLock] saveSchedule: not signed in — skipping cloud save",
+    );
+    return { ok: false, reason: "not_signed_in" };
+  }
+
+  const body = {
+    id: id,
+    user_id: session.userId,
+    intent: intent || "",
+    scheduled_at: scheduledAt, // snake_case — matches DB column
+    duration,
+    repeat: repeat || "none",
+    active: active !== false,
+  };
+
+  console.log("[DeepLock] saveSchedule body:", JSON.stringify(body));
+
+  const res = await sbFetch(
+    "/rest/v1/chomeExstensionSchedules",
+    "POST",
+    body,
+    session.accessToken,
+    { prefer: "resolution=merge-duplicates,return=minimal" },
+  );
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => "unknown");
+    console.error("[DeepLock] saveSchedule FAILED:", res.status, err);
+    return { ok: false, status: res.status, error: err };
+  }
+
+  console.log("[DeepLock] saveSchedule SUCCESS:", res.status);
+  return { ok: true };
+}
+
+async function getSchedules() {
+  const session = await getSession();
+  if (!session) return null; // caller handles local fallback
+
+  const now = new Date().toISOString();
+  const res = await sbFetch(
+    `/rest/v1/chomeExstensionSchedules?user_id=eq.${session.userId}&active=eq.true&order=scheduled_at.asc&select=*`,
+    "GET",
+    null,
+    session.accessToken,
+  );
+  if (!res.ok) return null;
+  return await res.json();
+}
+
+async function deleteSchedule(id) {
+  const session = await getSession();
+  if (!session) return false;
+
+  const res = await sbFetch(
+    `/rest/v1/chomeExstensionSchedules?id=eq.${id}`,
+    "DELETE",
+    null,
+    session.accessToken,
+  );
+  return res.ok;
+}
+
+async function markScheduleUsed(id) {
+  const session = await getSession();
+  if (!session) return false;
+
+  const res = await sbFetch(
+    `/rest/v1/chomeExstensionSchedules?id=eq.${id}`,
+    "PATCH",
+    { active: false },
+    session.accessToken,
+  );
+  return res.ok;
 }

@@ -94,6 +94,30 @@
             </svg>
             Profile
           </a>
+          <a class="nav-item" data-tab="schedule">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
+              <rect
+                x="1"
+                y="3"
+                width="13"
+                height="11"
+                rx="1.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.2"
+              />
+              <path d="M1 6h13" stroke="currentColor" stroke-width="1.2" />
+              <path
+                d="M4 1v3M11 1v3"
+                stroke="currentColor"
+                stroke-width="1.2"
+                stroke-linecap="round"
+              />
+              <circle cx="5" cy="9.5" r="1" fill="currentColor" />
+              <circle cx="10" cy="9.5" r="1" fill="currentColor" />
+            </svg>
+            Schedule
+          </a>
         </nav>
         <div class="sidebar-footer">
           <div class="session-status">
@@ -285,34 +309,84 @@
             </div>
           </div>
 
+          <!-- DEFAULT SITES -->
           <div class="card" style="margin-bottom: 16px">
             <div class="sites-section-title">Always blocked (default)</div>
             <div class="default-sites-grid" id="defaultSitesGrid"></div>
           </div>
 
+          <!-- CUSTOM SITES CARD -->
           <div class="card">
             <div class="sites-section-header">
-              <div class="sites-section-title">Your custom sites</div>
-              <button class="add-site-cta" id="toggleManualBtn">
-                + Add site
+              <div class="sites-section-title">Your custom blocks</div>
+              <div class="sites-count-badge" id="customSitesCount">0 added</div>
+            </div>
+
+            <!-- SMART SEARCH BAR -->
+            <div class="smart-search-wrap">
+              <div class="smart-search-row">
+                <svg
+                  class="search-icon"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.35-4.35" />
+                </svg>
+                <input
+                  id="siteSearchInput"
+                  class="smart-search-input"
+                  placeholder="Search or type any domain (e.g. twitch.tv, chess.com)…"
+                />
+                <button
+                  class="smart-search-clear"
+                  id="siteSearchClear"
+                  style="display: none"
+                >
+                  ✕
+                </button>
+              </div>
+              <!-- AI suggestions appear here -->
+              <div
+                id="siteSearchResults"
+                class="site-search-results"
+                style="display: none"
+              ></div>
+            </div>
+
+            <!-- CATEGORY BROWSER -->
+            <div class="category-tabs" id="categoryTabs">
+              <button class="cat-tab active" data-cat="social">Social</button>
+              <button class="cat-tab" data-cat="video">Video</button>
+              <button class="cat-tab" data-cat="news">News</button>
+              <button class="cat-tab" data-cat="shopping">Shopping</button>
+              <button class="cat-tab" data-cat="gaming">Gaming</button>
+              <button class="cat-tab" data-cat="productivity">
+                Work tools
               </button>
             </div>
+            <div class="category-grid" id="categoryGrid"></div>
 
-            <div class="popular-label">Quick add:</div>
-            <div class="popular-grid" id="popularGrid"></div>
-
-            <div class="manual-add-row" id="manualAddRow" style="display: none">
-              <input
-                id="manualSiteInput"
-                class="manual-input"
-                placeholder="e.g. linkedin.com"
-              />
-              <button class="add-site-cta" id="manualAddBtn">Add</button>
-              <button class="cancel-add-btn" id="cancelManualBtn">✕</button>
+            <!-- ADDED CUSTOM SITES -->
+            <div
+              class="custom-sites-divider"
+              id="customDivider"
+              style="display: none"
+            >
+              <span>Your blocked list</span>
+              <button class="clear-all-btn" id="clearAllCustomBtn">
+                Clear all
+              </button>
             </div>
-
             <div id="customSitesList" class="custom-sites-list">
-              <div class="empty-sites">No custom sites yet.</div>
+              <div class="empty-sites">
+                Nothing blocked yet. Add from categories above or search any
+                site.
+              </div>
             </div>
           </div>
         </div>
@@ -401,8 +475,12 @@
             </div>
           </div>
 
-          <!-- LICENSE -->
-          <div class="card profile-card" style="margin-bottom: 16px">
+          <!-- SUBSCRIPTION MANAGEMENT -->
+          <div
+            class="card profile-card"
+            style="margin-bottom: 16px"
+            id="subscriptionCard"
+          >
             <div class="profile-section-title">
               <svg
                 width="14"
@@ -414,13 +492,173 @@
                   d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
                 />
               </svg>
-              Pro License
+              Pro Subscription
             </div>
-            <div class="license-active-row">
-              <span class="license-dot"></span
-              ><span class="license-active-text">Active — DeepLock Pro</span>
+
+            <!-- DEFAULT: Active state -->
+            <div id="subStateActive">
+              <div class="license-active-row">
+                <span class="license-dot"></span>
+                <span class="license-active-text">Active — DeepLock Pro</span>
+                <span class="sub-renews-label" id="subRenewsLabel"></span>
+              </div>
+              <div class="license-key-row" id="licenseKeyRow">—</div>
+              <div class="sub-actions-row">
+                <a
+                  class="sub-manage-link"
+                  id="updatePaymentBtn"
+                  href="#"
+                  target="_blank"
+                  >Update payment method →</a
+                >
+                <button class="sub-cancel-trigger" id="subCancelTrigger">
+                  Cancel subscription
+                </button>
+              </div>
             </div>
-            <div class="license-key-row" id="licenseKeyRow">—</div>
+
+            <!-- STEP 1: What you'll lose (retention) -->
+            <div id="subStateRetention" style="display: none">
+              <div class="retention-header">
+                <div class="retention-title">Before you go...</div>
+                <div class="retention-sub">
+                  Here's what you'll lose when you cancel Pro.
+                </div>
+              </div>
+              <div class="retention-losses">
+                <div class="loss-item">
+                  <span class="loss-icon">🔥</span>
+                  <div class="loss-text">
+                    <span class="loss-val" id="retentionStreak">0d</span> streak
+                    — gone forever
+                  </div>
+                </div>
+                <div class="loss-item">
+                  <span class="loss-icon">📊</span>
+                  <div class="loss-text">
+                    <span class="loss-val" id="retentionSessions">0</span>
+                    sessions of analytics history
+                  </div>
+                </div>
+                <div class="loss-item">
+                  <span class="loss-icon">🎯</span>
+                  <div class="loss-text">
+                    Custom site blocking — back to defaults only
+                  </div>
+                </div>
+                <div class="loss-item">
+                  <span class="loss-icon">⏱</span>
+                  <div class="loss-text">
+                    Unlimited sessions → limited to 2/day free
+                  </div>
+                </div>
+              </div>
+              <div class="retention-btns">
+                <button class="retention-keep-btn" id="retentionKeepBtn">
+                  Keep my Pro →
+                </button>
+                <button
+                  class="retention-continue-btn"
+                  id="retentionContinueBtn"
+                >
+                  I still want to cancel
+                </button>
+              </div>
+            </div>
+
+            <!-- STEP 2: Pause offer -->
+            <div id="subStatePause" style="display: none">
+              <div class="retention-header">
+                <div class="retention-title">Need a break instead?</div>
+                <div class="retention-sub">
+                  Pause your subscription — your streak and data stay safe.
+                  Resume anytime.
+                </div>
+              </div>
+              <div class="pause-options">
+                <button class="pause-option-btn" data-months="1">
+                  Pause 1 month
+                </button>
+                <button class="pause-option-btn" data-months="2">
+                  Pause 2 months
+                </button>
+                <button class="pause-option-btn" data-months="3">
+                  Pause 3 months
+                </button>
+              </div>
+              <p class="pause-note">
+                You won't be charged while paused. Pro features stay active
+                until your current period ends.
+              </p>
+              <div class="retention-btns" style="margin-top: 14px">
+                <button class="retention-keep-btn" id="pauseKeepBtn">
+                  Keep my Pro →
+                </button>
+                <button class="retention-continue-btn" id="pauseContinueBtn">
+                  No, I want to cancel
+                </button>
+              </div>
+            </div>
+
+            <!-- STEP 3: Reason + final cancel -->
+            <div id="subStateReason" style="display: none">
+              <div class="retention-header">
+                <div class="retention-title">One last thing</div>
+                <div class="retention-sub">
+                  Help us improve — why are you cancelling?
+                </div>
+              </div>
+              <div class="reason-options" id="reasonOptions">
+                <label class="reason-option"
+                  ><input
+                    type="radio"
+                    name="cancelReason"
+                    value="too_expensive"
+                  />
+                  Too expensive</label
+                >
+                <label class="reason-option"
+                  ><input type="radio" name="cancelReason" value="not_using" />
+                  Not using it enough</label
+                >
+                <label class="reason-option"
+                  ><input
+                    type="radio"
+                    name="cancelReason"
+                    value="missing_feature"
+                  />
+                  Missing a feature I need</label
+                >
+                <label class="reason-option"
+                  ><input type="radio" name="cancelReason" value="switching" />
+                  Switching to another app</label
+                >
+                <label class="reason-option"
+                  ><input type="radio" name="cancelReason" value="technical" />
+                  Technical issues</label
+                >
+                <label class="reason-option"
+                  ><input type="radio" name="cancelReason" value="other" />
+                  Other</label
+                >
+              </div>
+              <div class="reason-portal-row">
+                <button class="reason-back-btn" id="reasonBackBtn">
+                  ← Go back
+                </button>
+                <button
+                  class="reason-confirm-btn"
+                  id="reasonConfirmBtn"
+                  disabled
+                >
+                  Open cancellation portal →
+                </button>
+              </div>
+              <p class="reason-portal-note">
+                You'll be taken to Lemon Squeezy to complete the cancellation.
+                Your Pro access continues until the end of your billing period.
+              </p>
+            </div>
           </div>
 
           <!-- SUPPORT -->
@@ -471,6 +709,156 @@
                 </div>
               </div>
               <button class="danger-btn" id="resetDataBtn">Reset</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- SCHEDULE -->
+        <div id="tab-schedule" class="tab-content">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Schedule</h1>
+              <p class="page-sub">
+                Auto-lock at a specific time — no willpower needed
+              </p>
+            </div>
+          </div>
+
+          <!-- CREATE SCHEDULE CARD -->
+          <div class="card sched-create-card" style="margin-bottom: 20px">
+            <div class="sched-form-title">New scheduled session</div>
+
+            <div class="sched-form-grid">
+              <!-- Intent -->
+              <div class="sched-field full-width">
+                <label class="sched-label">What will you work on?</label>
+                <input
+                  id="schedIntent"
+                  class="sched-input"
+                  placeholder="e.g. Study for exam, finish project..."
+                  maxlength="80"
+                />
+              </div>
+
+              <!-- Date -->
+              <div class="sched-field">
+                <label class="sched-label">Date</label>
+                <input id="schedDate" type="date" class="sched-input" />
+              </div>
+
+              <!-- Time -->
+              <div class="sched-field">
+                <label class="sched-label">Start time</label>
+                <input id="schedTime" type="time" class="sched-input" />
+              </div>
+
+              <!-- Duration -->
+              <div class="sched-field">
+                <label class="sched-label">Duration</label>
+                <select id="schedDuration" class="sched-input sched-select">
+                  <option value="25">25 minutes</option>
+                  <option value="45">45 minutes</option>
+                  <option value="60" selected>60 minutes</option>
+                  <option value="90">90 minutes</option>
+                  <option value="120">2 hours</option>
+                  <option value="180">3 hours</option>
+                </select>
+              </div>
+
+              <!-- Repeat -->
+              <div class="sched-field">
+                <label class="sched-label">Repeat</label>
+                <select id="schedRepeat" class="sched-input sched-select">
+                  <option value="none">One time</option>
+                  <option value="daily">Every day</option>
+                  <option value="weekdays">Weekdays only</option>
+                  <option value="weekends">Weekends only</option>
+                  <option value="weekly">Weekly</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="sched-form-footer">
+              <div class="sched-preview" id="schedPreview">—</div>
+              <button class="sched-create-btn" id="schedCreateBtn">
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 13 13"
+                  fill="currentColor"
+                >
+                  <path
+                    d="M6.5 1v11M1 6.5h11"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                Schedule Session
+              </button>
+            </div>
+            <div class="sched-feedback" id="schedFeedback"></div>
+          </div>
+
+          <!-- TEST BUTTON (remove before launch) -->
+          <div style="margin-bottom: 10px">
+            <button
+              id="schedTestBtn"
+              style="
+                background: #1c1c1c;
+                border: 1px solid #333;
+                color: #888;
+                border-radius: 7px;
+                padding: 7px 14px;
+                font-size: 11px;
+                cursor: pointer;
+                font-family: monospace;
+              "
+            >
+              ⚡ Test: fire alarm in 65 seconds
+            </button>
+            <span
+              id="schedTestStatus"
+              style="font-size: 11px; color: #555; margin-left: 10px"
+            ></span>
+          </div>
+
+          <!-- DEBUG PANEL -->
+          <div
+            class="sched-debug-panel"
+            id="schedDebugPanel"
+            style="display: none"
+          >
+            <div class="sched-debug-title">
+              &#x1F50D; Debug Log
+              <button
+                id="schedDebugClose"
+                style="
+                  float: right;
+                  background: none;
+                  border: none;
+                  color: inherit;
+                  cursor: pointer;
+                "
+              >
+                &#x2715;
+              </button>
+            </div>
+            <div id="schedDebugLog" class="sched-debug-log"></div>
+          </div>
+
+          <!-- UPCOMING SCHEDULES -->
+          <div class="sched-list-header">
+            <span class="sched-list-title">Upcoming sessions</span>
+            <span class="sched-count" id="schedCount">0 scheduled</span>
+          </div>
+          <div id="schedList" class="sched-list">
+            <div class="sched-empty">
+              <div class="sched-empty-icon">📅</div>
+              <div class="sched-empty-text">No sessions scheduled yet.</div>
+              <div class="sched-empty-sub">
+                Set one up above — DeepLock will lock automatically.
+              </div>
             </div>
           </div>
         </div>

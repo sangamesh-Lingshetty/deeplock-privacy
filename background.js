@@ -127,7 +127,7 @@ async function validateLicenseKey() {
 // ================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "startBlock") {
-    const { lockEndTime, duration, intent } = msg;
+    const { lockEndTime, duration, intent, pinHash } = msg;
     chrome.storage.local.get(
       ["customBlockedDomains", "isPro", "todaySessionCount", "todayDate"],
       (data) => {
@@ -140,10 +140,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ status: "limit_reached", sessionsUsed: todayCount });
           return;
         }
-        // ─────────────────────────────────────────────────────────
 
-        // Pro users get custom domains (stored as {name, filter} objects or raw strings)
-        // Free users always get DEFAULT_BLOCKED_DOMAINS
         const domains =
           data.isPro && data.customBlockedDomains?.length
             ? data.customBlockedDomains
@@ -159,10 +156,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           lastFocusTime: Date.now(),
           todaySessionCount: todayCount + 1,
           todayDate: today,
+          sessionPinHash: pinHash || null,
         });
+
         enableBlocking(domains);
         chrome.alarms.create(UNLOCK_ALARM, { when: lockEndTime });
-        if (data.isPro) setupHardMode(); // Pro: activate hard mode
+        if (data.isPro) setupHardMode();
+
+        // Set guilt uninstall URL with live stats
+        chrome.storage.local.get(
+          ["currentStreak", "totalSessions"],
+          (stats) => {
+            const minsLeft = Math.ceil((lockEndTime - Date.now()) / 60000);
+            const streak = stats.currentStreak || 0;
+            const sessions = stats.totalSessions || 0;
+            const uninstallUrl = `https://deeplock.app/quit?mins=${minsLeft}&streak=${streak}&sessions=${sessions}`;
+            chrome.runtime.setUninstallURL(uninstallUrl);
+          },
+        );
+
         sendResponse({ status: "ok", sessionsUsed: todayCount + 1 });
       },
     );
@@ -232,6 +244,68 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === "completeSession") {
     unlockSession();
+    sendResponse({ status: "ok" });
+    return true;
+  }
+
+  if (msg.action === "registerScheduleAlarm") {
+    const { schedule } = msg;
+    const fireTime =
+      schedule.scheduledMs || new Date(schedule.scheduledAt).getTime();
+    const msFromNow = fireTime - Date.now();
+    console.log(
+      `[DeepLock] registerScheduleAlarm: id=${schedule.id} fires in ${Math.round(msFromNow / 1000)}s`,
+    );
+
+    // Respond IMMEDIATELY before any async work — prevents port-closed error
+    if (fireTime > Date.now()) {
+      sendResponse({ status: "ok", fireTime, msFromNow });
+      chrome.alarms.create(`schedule_${schedule.id}`, { when: fireTime });
+      console.log(
+        "[DeepLock] Alarm created for",
+        new Date(fireTime).toLocaleString(),
+      );
+    } else {
+      sendResponse({ status: "past", fireTime, msFromNow });
+      console.warn(
+        "[DeepLock] Alarm time is in the past:",
+        schedule.scheduledAt,
+      );
+    }
+    return true;
+  }
+
+  if (msg.action === "testScheduleIn65s") {
+    const testId = `test_${Date.now()}`;
+    const fireTime = Date.now() + 65000;
+    const testSched = {
+      id: testId,
+      intent: "TEST SESSION — 1 minute",
+      scheduledAt: new Date(fireTime).toISOString(),
+      scheduledMs: fireTime,
+      duration: 1,
+      repeat: "none",
+      active: true,
+    };
+    // Respond immediately — then do storage work
+    sendResponse({
+      status: "ok",
+      testId,
+      firesAt: new Date(fireTime).toLocaleTimeString(),
+    });
+    chrome.storage.local.get(["schedules"], (data) => {
+      const schedules = data.schedules || [];
+      schedules.push(testSched);
+      chrome.storage.local.set({ schedules }, () => {
+        chrome.alarms.create(`schedule_${testId}`, { when: fireTime });
+        console.log("[DeepLock] TEST alarm set for 65s, id:", testId);
+      });
+    });
+    return true;
+  }
+
+  if (msg.action === "clearScheduleAlarm") {
+    chrome.alarms.clear(`schedule_${msg.scheduleId}`);
     sendResponse({ status: "ok" });
     return true;
   }
@@ -358,6 +432,18 @@ chrome.runtime.onStartup.addListener(() => {
   validateLicenseKey();
   scheduleSmartAlarms();
 
+  // Re-register any pending scheduled sessions
+  chrome.storage.local.get(["schedules"], (data) => {
+    const schedules = (data.schedules || []).filter((s) => s.active !== false);
+    const now = Date.now();
+    schedules.forEach((s) => {
+      const fireTime = new Date(s.scheduledAt || s.scheduled_at).getTime();
+      if (fireTime > now) {
+        chrome.alarms.create(`schedule_${s.id}`, { when: fireTime });
+      }
+    });
+  });
+
   // Pull cloud settings for Pro users (custom sites, etc.)
   chrome.storage.local.get(["isPro", "sbSignedIn"], (data) => {
     if (data.isPro && data.sbSignedIn) {
@@ -396,6 +482,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   else if (alarm.name === MORNING_ALARM) checkMorningFocus();
   else if (alarm.name === EVENING_ALARM) checkEveningFocus();
   else if (alarm.name === "weeklyReport") checkWeeklyReport();
+  else if (alarm.name.startsWith("schedule_")) fireScheduledSession(alarm.name);
 });
 
 // ================================
@@ -779,9 +866,16 @@ function unlockSession() {
       "longestStreak",
       "dailySessions",
       "lastSessionDate",
+      "focusIntent",
+      "isPro",
+      "sessionPinHash",
+      "scheduledSessionId",
     ],
     (data) => {
       const duration = data.sessionDuration || 0;
+      const intent = data.focusIntent || "";
+      const isPro = !!data.isPro;
+      const scheduledId = data.scheduledSessionId || null;
       const totalSessions = (data.totalSessions || 0) + 1;
       const totalFocusMins = (data.totalFocusMinutes || 0) + duration;
 
@@ -789,6 +883,7 @@ function unlockSession() {
       const dailySessions = data.dailySessions || {};
       dailySessions[today] = (dailySessions[today] || 0) + duration;
 
+      // ── STREAK LOGIC ──────────────────────────────────
       let currentStreak = data.currentStreak || 0;
       let longestStreak = data.longestStreak || 0;
       const lastDate = data.lastSessionDate;
@@ -798,19 +893,23 @@ function unlockSession() {
 
       if (!lastDate) currentStreak = 1;
       else if (lastDate === today) {
-        /* same day */
+        /* same day — keep streak */
       } else if (lastDate === yStr) currentStreak += 1;
-      else currentStreak = 1;
+      else currentStreak = 1; // gap — reset
 
       if (currentStreak > longestStreak) longestStreak = currentStreak;
 
       disableBlocking();
       chrome.alarms.clear(UNLOCK_ALARM);
+      chrome.runtime.setUninstallURL("https://deeplock.app/uninstall");
 
+      // ── WRITE ALL STATS ───────────────────────────────
       chrome.storage.local.set({
         isLocked: false,
         lockEndTime: null,
         sessionStartTime: null,
+        sessionPinHash: null,
+        scheduledSessionId: null,
         totalSessions,
         totalFocusMinutes: totalFocusMins,
         currentStreak,
@@ -819,35 +918,203 @@ function unlockSession() {
         lastSessionDate: today,
       });
 
-      // ── SUPABASE SYNC (silent, Pro users only) ──
-      chrome.storage.local.get(["focusIntent", "isPro"], (extra) => {
-        if (extra.isPro) {
-          // Save this session
-          saveSession({
-            date: today,
-            duration,
-            intent: extra.focusIntent || "",
-            completed: true,
-          }).catch(() => {});
-
-          // Sync streak stats
-          syncStats({
-            currentStreak,
-            longestStreak,
-            totalSessions,
-            totalFocusMinutes: totalFocusMins,
-          }).catch(() => {});
-        }
-      });
-
-      chrome.notifications.create({
+      // ── COMPLETION NOTIFICATION ───────────────────────
+      chrome.notifications.create(`sessionDone_${Date.now()}`, {
         type: "basic",
         iconUrl: "icon128.png",
         title: "Session Complete 🔥",
-        message: `${duration} min done. Streak: ${currentStreak} day${currentStreak !== 1 ? "s" : ""}.`,
+        message: `${duration} min done. Streak: ${currentStreak} day${currentStreak !== 1 ? "s" : ""}. ${intent ? `"${intent.slice(0, 40)}"` : ""}`,
+        priority: 2,
+        buttons: [{ title: "View dashboard" }],
       });
+
+      // ── SUPABASE SYNC (Pro users) ─────────────────────
+      if (isPro) {
+        // 1. Save session to history table
+        saveSession({
+          date: today,
+          duration,
+          intent,
+          completed: true,
+        }).catch(() => {});
+
+        // 2. Sync stats (streak etc)
+        syncStats({
+          currentStreak,
+          longestStreak,
+          totalSessions,
+          totalFocusMinutes: totalFocusMins,
+        }).catch(() => {});
+
+        // 3. If this was a scheduled session, mark it used in Supabase
+        if (scheduledId) {
+          markScheduleUsed(scheduledId).catch(() => {});
+        }
+      }
+
+      console.log(
+        `[DeepLock] Session unlocked. Streak: ${currentStreak}d, Total: ${totalSessions}, Intent: "${intent}"`,
+      );
     },
   );
+}
+
+// ================================
+// SCHEDULED SESSION FIRE
+// Called by alarm — auto-starts blocking
+// ================================
+function fireScheduledSession(alarmName) {
+  const schedId = alarmName.replace("schedule_", "");
+  console.log("[DeepLock] Firing scheduled session:", schedId);
+
+  chrome.storage.local.get(
+    [
+      "schedules",
+      "isLocked",
+      "isPro",
+      "customBlockedDomains",
+      "todaySessionCount",
+      "todayDate",
+      "totalSessions",
+      "totalFocusMinutes",
+      "currentStreak",
+      "longestStreak",
+      "dailySessions",
+      "lastSessionDate",
+    ],
+    (data) => {
+      // Don't interrupt an active session
+      if (data.isLocked) {
+        console.log("[DeepLock] Scheduled session skipped — already locked");
+        return;
+      }
+
+      const schedules = data.schedules || [];
+      const sched = schedules.find((s) => s.id === schedId);
+      if (!sched) {
+        console.log("[DeepLock] Schedule not found in storage:", schedId);
+        return;
+      }
+
+      const duration = sched.duration || 60;
+      const intent = sched.intent || "Scheduled focus session";
+      const endTime = Date.now() + duration * 60 * 1000;
+      const today = new Date().toISOString().split("T")[0];
+      const isSameDay = data.todayDate === today;
+      const todayCount = isSameDay ? data.todaySessionCount || 0 : 0;
+
+      // Free tier check
+      if (!data.isPro && todayCount >= FREE_SESSION_LIMIT) {
+        chrome.notifications.create("schedLimitHit", {
+          type: "basic",
+          iconUrl: "icon128.png",
+          title: "Scheduled session blocked",
+          message:
+            "You've hit today's free limit. Upgrade to Pro for unlimited scheduled sessions.",
+          priority: 2,
+        });
+        return;
+      }
+
+      // Pro users get custom domains, free users get defaults
+      const domains =
+        data.isPro && data.customBlockedDomains?.length
+          ? data.customBlockedDomains
+          : DEFAULT_BLOCKED_DOMAINS;
+
+      // ── WRITE FULL SESSION STATE ─────────────────────────
+      chrome.storage.local.set(
+        {
+          isLocked: true,
+          lockEndTime: endTime,
+          sessionDuration: duration,
+          focusIntent: intent, // ← write intent NOW so unlockSession reads it correctly
+          sessionStartTime: Date.now(),
+          blockedDomains: domains,
+          lastFocusTime: Date.now(),
+          todaySessionCount: todayCount + 1,
+          todayDate: today,
+          sessionPinHash: null, // scheduled sessions have no PIN
+          scheduledSessionId: schedId, // track which schedule fired this
+        },
+        () => {
+          enableBlocking(domains);
+          chrome.alarms.create(UNLOCK_ALARM, { when: endTime });
+
+          // ── NOTIFICATION ─────────────────────────────────
+          chrome.notifications.create(`scheduledStart_${schedId}`, {
+            type: "basic",
+            iconUrl: "icon128.png",
+            title: "🔒 Focus session started",
+            message: `${intent} — ${duration} min. Sites are now blocked.`,
+            priority: 2,
+            buttons: [{ title: "View session" }],
+          });
+
+          console.log(
+            "[DeepLock] Scheduled session started:",
+            intent,
+            duration + "min",
+          );
+        },
+      );
+
+      // ── HANDLE REPEAT ────────────────────────────────────
+      handleScheduleRepeat(sched, schedules);
+    },
+  );
+}
+
+function handleScheduleRepeat(sched, allSchedules) {
+  const repeat = sched.repeat || "none";
+  const schedId = sched.id;
+
+  if (repeat === "none") {
+    // One-time: mark inactive
+    const updated = allSchedules.map((s) =>
+      s.id === schedId ? { ...s, active: false } : s,
+    );
+    chrome.storage.local.set({ schedules: updated });
+    // Mark in Supabase
+    markScheduleUsed(schedId).catch(() => {});
+    return;
+  }
+
+  // Repeating: calculate next fire time
+  const current = new Date(sched.scheduledAt);
+  let next = new Date(current);
+
+  if (repeat === "daily") {
+    next.setDate(next.getDate() + 1);
+  } else if (repeat === "weekdays") {
+    do {
+      next.setDate(next.getDate() + 1);
+    } while ([0, 6].includes(next.getDay()));
+  } else if (repeat === "weekends") {
+    do {
+      next.setDate(next.getDate() + 1);
+    } while (![0, 6].includes(next.getDay()));
+  } else if (repeat === "weekly") {
+    next.setDate(next.getDate() + 7);
+  }
+
+  const nextISO = next.toISOString();
+  const newSched = {
+    ...sched,
+    scheduledAt: nextISO,
+    id: `sched_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+  };
+
+  // Update local schedules — remove old, add new
+  const updated = allSchedules.filter((s) => s.id !== schedId).concat(newSched);
+  chrome.storage.local.set({ schedules: updated });
+
+  // Register new alarm
+  chrome.alarms.create(`schedule_${newSched.id}`, { when: next.getTime() });
+
+  // Sync to Supabase
+  saveSchedule(newSched).catch(() => {});
+  markScheduleUsed(schedId).catch(() => {});
 }
 
 function checkWeeklyInactivity() {
