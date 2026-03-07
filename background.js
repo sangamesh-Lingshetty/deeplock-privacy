@@ -33,7 +33,7 @@ const REMINDER_ALARM = "deeplockWeekly";
 const INACTIVITY_ALARM = "inactivityCheck";
 const MORNING_ALARM = "morningCheck";
 const EVENING_ALARM = "eveningCheck";
-const FREE_SESSION_LIMIT = 2;
+const FREE_SESSION_LIMIT = 4;
 
 // ================================
 // LICENSE KEY VALIDATION
@@ -54,6 +54,12 @@ async function activateLicenseKey(licenseKey) {
     const data = await res.json();
 
     if (data.activated) {
+      // Verify this key is for DeepLock specifically (not a key from another product)
+      const productId = data.meta?.product_id?.toString() || "";
+      if (productId && productId !== LS_PRODUCT_ID.toString()) {
+        return { success: false, error: "This key is not valid for DeepLock." };
+      }
+
       await chrome.storage.local.set({
         isPro: true,
         licenseKey,
@@ -62,24 +68,42 @@ async function activateLicenseKey(licenseKey) {
       });
       return { success: true };
     } else {
-      // Key already activated on another instance — still trust it locally
-      // This handles the "activation limit reached" case for returning users
-      if (data.license_key?.status === "active") {
-        await chrome.storage.local.set({
-          isPro: true,
-          licenseKey,
-          licenseValidatedAt: Date.now(),
-        });
-        return { success: true };
+      // Key exists but activation limit reached (already on max devices)
+      // DO NOT grant Pro — this is the key-sharing attack vector
+      // Instead, tell the user to deactivate on another device or buy a new key
+      const status = data.license_key?.status;
+
+      if (status === "active") {
+        // Key is real but instance limit hit — help user, don't grant for free
+        return {
+          success: false,
+          error:
+            "Key already activated on another device. Deactivate it first at lemonsqueezy.com, or use a different key.",
+        };
       }
-      return { success: false, error: data.error || "Invalid license key" };
+
+      if (status === "expired") {
+        return { success: false, error: "This license key has expired." };
+      }
+
+      if (status === "disabled") {
+        return { success: false, error: "This license key has been disabled." };
+      }
+
+      return {
+        success: false,
+        error: data.error || "Invalid license key. Check and try again.",
+      };
     }
   } catch (e) {
-    return { success: false, error: "Network error. Check your connection." };
+    return {
+      success: false,
+      error: "Network error. Check your connection and try again.",
+    };
   }
 }
 
-// Called on every popup open — server always overrides local storage
+// Called on every popup open AND on every startBlock — server always overrides local storage
 async function validateLicenseKey() {
   const data = await chrome.storage.local.get([
     "licenseKey",
@@ -87,7 +111,15 @@ async function validateLicenseKey() {
     "licenseValidatedAt",
   ]);
 
+  // No key stored → definitely not Pro
   if (!data.licenseKey) {
+    await chrome.storage.local.set({ isPro: false });
+    return { isPro: false };
+  }
+
+  // No instanceId → key was never properly activated through LS server
+  // Catches: someone who manually set licenseKey without going through activateLicenseKey()
+  if (!data.licenseInstanceId) {
     await chrome.storage.local.set({ isPro: false });
     return { isPro: false };
   }
@@ -98,7 +130,7 @@ async function validateLicenseKey() {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         license_key: data.licenseKey,
-        instance_id: data.licenseInstanceId || "",
+        instance_id: data.licenseInstanceId,
       }),
     });
 
@@ -114,11 +146,20 @@ async function validateLicenseKey() {
 
     return { isPro: isValid };
   } catch (e) {
-    // Network offline — trust local cache for up to 7 days
+    // Network genuinely offline — trust local cache for up to 3 days (not 7)
+    // Shorter window = smaller attack surface for the offline bypass
+    const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
     const lastValidated = data.licenseValidatedAt || 0;
-    const useCached = Date.now() - lastValidated < WEEK_MS;
+    const useCached = Date.now() - lastValidated < THREE_DAYS;
+
+    if (!useCached) {
+      // Cache expired — force re-validation next time online
+      await chrome.storage.local.set({ isPro: false });
+      return { isPro: false };
+    }
+
     const cached = await chrome.storage.local.get(["isPro"]);
-    return { isPro: useCached ? !!cached.isPro : false };
+    return { isPro: !!cached.isPro };
   }
 }
 
@@ -128,56 +169,55 @@ async function validateLicenseKey() {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "startBlock") {
     const { lockEndTime, duration, intent, pinHash } = msg;
-    chrome.storage.local.get(
-      ["customBlockedDomains", "isPro", "todaySessionCount", "todayDate"],
-      (data) => {
-        // ── FREE TIER LIMIT ──────────────────────────────────────
-        const today = new Date().toISOString().split("T")[0];
-        const isSameDay = data.todayDate === today;
-        const todayCount = isSameDay ? data.todaySessionCount || 0 : 0;
 
-        if (!data.isPro && todayCount >= FREE_SESSION_LIMIT) {
-          sendResponse({ status: "limit_reached", sessionsUsed: todayCount });
-          return;
-        }
+    // ── SECURITY: Always validate Pro status live against Lemon Squeezy ──
+    // NEVER trust isPro from chrome.storage.local — it's writable by anyone
+    // with DevTools. validateLicenseKey() hits the LS server every time.
+    // Falls back to 7-day cache ONLY if network is genuinely offline.
+    validateLicenseKey().then((validation) => {
+      const isProVerified = validation.isPro;
 
-        const domains =
-          data.isPro && data.customBlockedDomains?.length
-            ? data.customBlockedDomains
-            : DEFAULT_BLOCKED_DOMAINS;
+      chrome.storage.local.get(
+        ["customBlockedDomains", "todaySessionCount", "todayDate"],
+        (data) => {
+          const today = new Date().toISOString().split("T")[0];
+          const isSameDay = data.todayDate === today;
+          const todayCount = isSameDay ? data.todaySessionCount || 0 : 0;
 
-        chrome.storage.local.set({
-          isLocked: true,
-          lockEndTime,
-          sessionDuration: duration,
-          focusIntent: intent,
-          sessionStartTime: Date.now(),
-          blockedDomains: domains,
-          lastFocusTime: Date.now(),
-          todaySessionCount: todayCount + 1,
-          todayDate: today,
-          sessionPinHash: pinHash || null,
-        });
+          // Limit check uses server-verified Pro status — not local storage
+          if (!isProVerified && todayCount >= FREE_SESSION_LIMIT) {
+            sendResponse({ status: "limit_reached", sessionsUsed: todayCount });
+            return;
+          }
 
-        enableBlocking(domains);
-        chrome.alarms.create(UNLOCK_ALARM, { when: lockEndTime });
-        if (data.isPro) setupHardMode();
+          // Custom domains only for verified Pro users
+          const domains =
+            isProVerified && data.customBlockedDomains?.length
+              ? data.customBlockedDomains
+              : DEFAULT_BLOCKED_DOMAINS;
 
-        // Set guilt uninstall URL with live stats
-        chrome.storage.local.get(
-          ["currentStreak", "totalSessions"],
-          (stats) => {
-            const minsLeft = Math.ceil((lockEndTime - Date.now()) / 60000);
-            const streak = stats.currentStreak || 0;
-            const sessions = stats.totalSessions || 0;
-            const uninstallUrl = `https://deeplock.app/quit?mins=${minsLeft}&streak=${streak}&sessions=${sessions}`;
-            chrome.runtime.setUninstallURL(uninstallUrl);
-          },
-        );
+          chrome.storage.local.set({
+            isLocked: true,
+            lockEndTime,
+            sessionDuration: duration,
+            focusIntent: intent,
+            sessionStartTime: Date.now(),
+            blockedDomains: domains,
+            lastFocusTime: Date.now(),
+            todaySessionCount: todayCount + 1,
+            todayDate: today,
+            sessionPinHash: pinHash || null,
+            isPro: isProVerified, // write back server-verified value — overwrites any tampering
+          });
 
-        sendResponse({ status: "ok", sessionsUsed: todayCount + 1 });
-      },
-    );
+          enableBlocking(domains);
+          chrome.alarms.create(UNLOCK_ALARM, { when: lockEndTime });
+          setupHardMode();
+
+          sendResponse({ status: "ok", sessionsUsed: todayCount + 1 });
+        },
+      );
+    });
     return true;
   }
 
@@ -218,9 +258,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === "openPayment") {
-    chrome.tabs.create({
-      url: "https://deeplockproversion.lemonsqueezy.com/checkout/buy/51f65cef-610d-4836-b3fb-82a141ad5c30",
-    });
+    // ⚠️  YOUR LEMON SQUEEZY CHECKOUT URL
+    // Replace with the URL from: lemonsqueezy.com → Your Store → Products → DeepLock Pro → Share
+    // Format: https://YOUR-STORE.lemonsqueezy.com/checkout/buy/PRODUCT-UUID
+    const CHECKOUT_URL =
+      "https://deeplockproversion.lemonsqueezy.com/checkout/buy/7b55508e-ee4c-4a87-98ff-c7ddde0ba69a";
+    chrome.tabs.create({ url: CHECKOUT_URL });
     sendResponse({ status: "ok" });
     return true;
   }
@@ -353,50 +396,128 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ================================
 // INSTALL
 // ================================
+// HARD MODE v2 — Multi-layer uninstall prevention
 // ================================
-// HARD MODE — Uninstall prevention
-// Shows warning page if user tries to remove extension during active session
-// chrome.management.onUninstalled fires BEFORE uninstall completes
-// ================================
+
+let hardModeTabWatcher = null;
+
 function setupHardMode() {
-  chrome.storage.local.get(["isLocked", "isPro"], (data) => {
-    if (!data.isPro || !data.isLocked) return;
+  // Remove any previous watcher to avoid duplicates on re-call
+  if (hardModeTabWatcher) {
+    chrome.tabs.onUpdated.removeListener(hardModeTabWatcher);
+    hardModeTabWatcher = null;
+  }
 
-    // Set an uninstall URL — Chrome shows this page if extension is removed
-    // This can't BLOCK uninstall (Chrome doesn't allow that) but it shows a warning page
-    chrome.runtime.setUninstallURL(
-      "https://cnflokkgffophhebjmmpnjcolejalhna.chromiumapp.org/supabase?uninstall=true",
-    );
+  // ── Layer 1: Tab interception ─────────────────────────────────
+  // Chrome does NOT allow redirecting chrome:// URLs via tabs.update.
+  // Strategy: when user lands on chrome://extensions, IMMEDIATELY open
+  // our hardmode.html as a new active tab covering it — they see our
+  // intervention page before they can click "Remove".
+  hardModeTabWatcher = function (tabId, changeInfo, tab) {
+    if (!tab.url) return;
+    if (changeInfo.status !== "complete") return;
 
-    // The real hard mode: when locked, open a warning tab if user visits extensions page
-    chrome.tabs.onUpdated.addListener(
-      function hardModeTabWatch(tabId, changeInfo, tab) {
-        if (!tab.url) return;
-        const isExtPage =
-          tab.url.startsWith("chrome://extensions") ||
-          tab.url.startsWith("chrome-extension://");
-        if (isExtPage && changeInfo.status === "complete") {
-          chrome.storage.local.get(
-            ["isLocked", "isPro", "lockEndTime"],
-            (d) => {
-              if (d.isPro && d.isLocked && d.lockEndTime > Date.now()) {
-                const remaining = Math.ceil(
-                  (d.lockEndTime - Date.now()) / 60000,
-                );
-                chrome.notifications.create("hardModeWarning", {
-                  type: "basic",
-                  iconUrl: "icon128.png",
-                  title: "⚠️ DeepLock Hard Mode Active",
-                  message: `You're in a locked session. ${remaining} minutes left. Finish what you started.`,
-                  priority: 2,
-                });
-              }
-            },
-          );
-        }
-      },
-    );
-  });
+    const isExtPage =
+      tab.url === "chrome://extensions/" ||
+      tab.url === "chrome://extensions" ||
+      tab.url.startsWith("chrome://extensions/");
+    if (!isExtPage) return;
+
+    chrome.storage.local.get(["isLocked", "lockEndTime"], (d) => {
+      if (!d.isLocked || d.lockEndTime <= Date.now()) {
+        teardownHardMode();
+        return;
+      }
+
+      console.log(
+        "[DeepLock] Hard mode: intercepted chrome://extensions — opening intervention",
+      );
+
+      // Open hardmode page as new active tab — covers the extensions page
+      chrome.tabs.create({
+        url: chrome.runtime.getURL("hardmode.html"),
+        active: true,
+      });
+
+      // Notification as additional friction layer
+      chrome.notifications.create("hardMode_" + Date.now(), {
+        type: "basic",
+        iconUrl: "icon128.png",
+        title: "\u26a0\ufe0f Session active \u2014 you're still locked in",
+        message: `${Math.ceil((d.lockEndTime - Date.now()) / 60000)} min left. Close this and finish.`,
+        priority: 2,
+      });
+    });
+  };
+
+  chrome.tabs.onUpdated.addListener(hardModeTabWatcher);
+  console.log("[DeepLock] Hard mode ACTIVE \u2014 tab watcher running");
+
+  // ── Layer 2: Nuclear uninstall URL ────────────────────────────
+  setNuclearUninstallURL();
+}
+
+function teardownHardMode() {
+  if (hardModeTabWatcher) {
+    chrome.tabs.onUpdated.removeListener(hardModeTabWatcher);
+    hardModeTabWatcher = null;
+    console.log("[DeepLock] Hard mode watcher removed");
+  }
+}
+
+function setNuclearUninstallURL() {
+  chrome.storage.local.get(
+    [
+      "currentStreak",
+      "totalSessions",
+      "totalFocusMinutes",
+      "lockEndTime",
+      "sessionDuration",
+      "sessionStartTime",
+    ],
+    (data) => {
+      const streak = data.currentStreak || 0;
+      const sessions = data.totalSessions || 0;
+      const totalMins = data.totalFocusMinutes || 0;
+      const duration = data.sessionDuration || 60;
+      const startTime = data.sessionStartTime || Date.now();
+      const elapsed = Math.floor((Date.now() - startTime) / 60000);
+      const minsLeft = data.lockEndTime
+        ? Math.max(0, Math.ceil((data.lockEndTime - Date.now()) / 60000))
+        : 0;
+
+      // In production replace with your hosted page
+      // For now, falls back gracefully if domain not live
+      const base = "https://deeplock.app/quit";
+      const url = `${base}?streak=${streak}&sessions=${sessions}&totalMins=${totalMins}&mins=${minsLeft}&elapsed=${elapsed}&duration=${duration}`;
+      chrome.runtime.setUninstallURL(url);
+    },
+  );
+}
+
+// ── Layer 3: Detect mid-session reinstall ──────────────────────
+function checkMidSessionQuit() {
+  chrome.storage.local.get(
+    ["isLocked", "lockEndTime", "sessionStartTime"],
+    (data) => {
+      if (!data.isLocked) return;
+      if (!data.lockEndTime || data.lockEndTime <= Date.now()) return;
+      // Extension reinstalled while session was still active in storage
+      const elapsed = Math.floor(
+        (Date.now() - (data.sessionStartTime || Date.now())) / 60000,
+      );
+      console.log(
+        "[DeepLock] Mid-session reinstall detected. Was",
+        elapsed,
+        "min in.",
+      );
+      chrome.storage.local.get(["midSessionQuits"], (d) => {
+        const quits = d.midSessionQuits || [];
+        quits.push({ time: new Date().toISOString(), elapsedMins: elapsed });
+        chrome.storage.local.set({ midSessionQuits: quits, isLocked: false });
+      });
+    },
+  );
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -492,36 +613,71 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // ================================
 function scheduleSmartAlarms() {
   const now = new Date();
+  const hour = now.getHours();
+  const today = now.toISOString().split("T")[0];
 
-  // Helper: get next occurrence of a given hour today or tomorrow
-  function nextOccurrence(hour) {
+  function nextOccurrence(targetHour) {
     const t = new Date();
-    t.setHours(hour, 0, 0, 0);
-    if (now >= t) t.setDate(t.getDate() + 1); // already passed → tomorrow
+    t.setHours(targetHour, 0, 0, 0);
+    // If that time already passed today, schedule for tomorrow
+    if (now >= t) t.setDate(t.getDate() + 1);
     return t.getTime();
   }
 
-  chrome.alarms.get(MORNING_ALARM, (existing) => {
-    if (!existing) {
-      chrome.alarms.create(MORNING_ALARM, {
-        when: nextOccurrence(9),
-        periodInMinutes: 24 * 60,
-      });
-    }
-  });
+  // Morning alarm — only create if we haven't fired it today already
+  chrome.storage.local.get(["lastMorningFired", "lastEveningFired"], (data) => {
+    const morningFiredToday = data.lastMorningFired === today;
+    const eveningFiredToday = data.lastEveningFired === today;
 
-  chrome.alarms.get(EVENING_ALARM, (existing) => {
-    if (!existing) {
-      chrome.alarms.create(EVENING_ALARM, {
-        when: nextOccurrence(19),
-        periodInMinutes: 24 * 60,
-      });
-    }
+    chrome.alarms.get(MORNING_ALARM, (existing) => {
+      if (!existing) {
+        const when = nextOccurrence(9);
+        // If it's before 9am today and we haven't fired yet — schedule for today's 9am
+        // If it's after 9am — schedule for tomorrow (nextOccurrence handles this)
+        chrome.alarms.create(MORNING_ALARM, {
+          when,
+          periodInMinutes: 24 * 60,
+        });
+        console.log(
+          "[DeepLock] Morning alarm set for",
+          new Date(when).toLocaleString(),
+        );
+      }
+    });
+
+    chrome.alarms.get(EVENING_ALARM, (existing) => {
+      if (!existing) {
+        const when = nextOccurrence(19);
+        chrome.alarms.create(EVENING_ALARM, {
+          when,
+          periodInMinutes: 24 * 60,
+        });
+        console.log(
+          "[DeepLock] Evening alarm set for",
+          new Date(when).toLocaleString(),
+        );
+      }
+    });
   });
 }
 
 function checkMorningFocus() {
   const today = new Date().toISOString().split("T")[0];
+
+  // Prevent double-firing on same day (e.g. browser restarted at 9:01am)
+  chrome.storage.local.get(["lastMorningFired"], (guard) => {
+    if (guard.lastMorningFired === today) {
+      console.log(
+        "[DeepLock] Morning notification already fired today — skipping",
+      );
+      return;
+    }
+    chrome.storage.local.set({ lastMorningFired: today });
+    _doMorningNotification(today);
+  });
+}
+
+function _doMorningNotification(today) {
   chrome.storage.local.get(
     [
       "todaySessionCount",
@@ -536,7 +692,6 @@ function checkMorningFocus() {
       const isSameDay = data.todayDate === today;
       const count = isSameDay ? data.todaySessionCount || 0 : 0;
       const streak = data.currentStreak || 0;
-      const longest = data.longestStreak || 0;
       const total = data.totalSessions || 0;
       const isPro = !!data.isPro;
 
@@ -594,6 +749,21 @@ function checkMorningFocus() {
 
 function checkEveningFocus() {
   const today = new Date().toISOString().split("T")[0];
+
+  // Prevent double-firing on same day
+  chrome.storage.local.get(["lastEveningFired"], (guard) => {
+    if (guard.lastEveningFired === today) {
+      console.log(
+        "[DeepLock] Evening notification already fired today — skipping",
+      );
+      return;
+    }
+    chrome.storage.local.set({ lastEveningFired: today });
+    _doEveningNotification(today);
+  });
+}
+
+function _doEveningNotification(today) {
   chrome.storage.local.get(
     [
       "todaySessionCount",
@@ -794,23 +964,63 @@ function enableBlocking(domains) {
   // Build domain list from all sites
   const allDomains = domains.map((d) => {
     const filter = typeof d === "string" ? d : d.filter;
-    // Extract domain from ||domain.com^ format
     return filter.replace("||", "").replace("^", "");
   });
 
-  // Add tricky subdomains that the main domain rules miss
+  // Extra domains: alternate TLDs and subdomains requestDomains misses
   const extraDomains = [
     "app.discord.com",
+    "discordapp.com",
     "ptab.io",
     "vm.tiktok.com",
     "messenger.com",
     "l.messenger.com",
+    "youtu.be",
+    "redd.it",
+    "t.co",
   ];
 
   const allTargets = [...new Set([...allDomains, ...extraDomains])];
 
-  // Use requestDomains — more reliable than urlFilter, handles x.com correctly
-  allTargets.forEach((domain) => {
+  // SPECIAL CASE: x.com has a known issue with requestDomains in Chrome
+  // (single-character subdomain matching is unreliable for very short domains)
+  // Use urlFilter for x.com and twitter.com to guarantee blocking
+  const urlFilterDomains = ["x.com", "twitter.com", "t.co"];
+  const requestDomainsList = allTargets.filter(
+    (d) => !urlFilterDomains.includes(d),
+  );
+
+  // requestDomains rules for all normal domains
+  requestDomainsList.forEach((domain) => {
+    rules.push({
+      id: id++,
+      priority: 1,
+      action: {
+        type: "redirect",
+        redirect: { url: chrome.runtime.getURL("pause.html") },
+      },
+      condition: {
+        requestDomains: [domain],
+        resourceTypes: ["main_frame"],
+      },
+    });
+  });
+
+  // urlFilter rules for x.com / twitter.com — catches x.com/home, twitter.com/*, t.co/*
+  urlFilterDomains.forEach((domain) => {
+    rules.push({
+      id: id++,
+      priority: 2, // higher priority than requestDomains rules
+      action: {
+        type: "redirect",
+        redirect: { url: chrome.runtime.getURL("pause.html") },
+      },
+      condition: {
+        urlFilter: `||${domain}^`,
+        resourceTypes: ["main_frame"],
+      },
+    });
+    // Also add requestDomains as belt-and-suspenders backup
     rules.push({
       id: id++,
       priority: 1,
@@ -838,8 +1048,9 @@ function enableBlocking(domains) {
           console.log(
             "[DeepLock] Blocking enabled:",
             rules.length,
-            "rules →",
-            allTargets.join(", "),
+            "rules for",
+            allTargets.length,
+            "domains",
           );
         }
       },

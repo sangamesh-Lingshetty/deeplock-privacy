@@ -42,15 +42,25 @@ const POPUP_POPULAR_SITES = [
 // Local is just a loading fallback, not the truth
 // ================================
 function checkProStatus() {
-  // Show cached state immediately (no flicker)
-  chrome.storage.local.get(["isPro"], (data) => {
-    isPro = !!data.isPro;
-    updateProUI();
-  });
+  // Default to NOT Pro — never trust local storage for UI gating
+  // Local storage is writable by anyone with DevTools
+  isPro = false;
+  updateProUI(); // render locked state immediately
 
-  // Then validate against server — result overwrites the cached state
+  // Validate against LS server — this is the only truth
   chrome.runtime.sendMessage({ action: "validateLicense" }, (res) => {
-    if (chrome.runtime.lastError) return; // background not ready yet
+    if (chrome.runtime.lastError) {
+      // SW still waking — ONLY trust local if it has a real instanceId
+      // (instanceId only exists after a genuine LS activation, not a manual set)
+      chrome.storage.local.get(["isPro", "licenseInstanceId"], (data) => {
+        if (data.isPro && data.licenseInstanceId) {
+          isPro = true;
+          updateProUI();
+        }
+        // else: stay locked — no instanceId means no real purchase
+      });
+      return;
+    }
     const serverIsPro = res?.isPro ?? false;
     if (serverIsPro !== isPro) {
       isPro = serverIsPro;
@@ -237,7 +247,7 @@ function updateStartBtn() {
 }
 
 // ================================
-// START SESSION
+// START SESSION — fires immediately, no PIN, no cancel
 // ================================
 function startSession() {
   if (!selectedMinutes) return;
@@ -256,19 +266,24 @@ function startSession() {
     return;
   }
 
+  // Lock immediately — no PIN step, no cancel possible
+  const startBtn = document.getElementById("startBtn");
+  if (startBtn) startBtn.disabled = true;
+
   const endTime = Date.now() + selectedMinutes * 60 * 1000;
   sessionDurationTotal = selectedMinutes;
 
-  // Let background handle ALL storage — no race condition
   chrome.runtime.sendMessage(
     {
       action: "startBlock",
       lockEndTime: endTime,
       duration: selectedMinutes,
       intent,
+      pinHash: null,
     },
     (res) => {
       if (res?.status === "limit_reached") {
+        if (startBtn) startBtn.disabled = false;
         showUpgradeModal("limit");
         return;
       }
@@ -285,7 +300,6 @@ function showActiveState(endTime) {
   const inactive = document.getElementById("inactive");
   const active = document.getElementById("active");
   const proSection = document.getElementById("proSection");
-
   if (inactive) inactive.style.display = "none";
   if (proSection) proSection.style.display = "none";
   if (active) active.style.display = "block";
@@ -302,14 +316,7 @@ function showActiveState(endTime) {
         const domains = data.blockedDomains || [];
         const unique = new Set(
           domains
-            .map((d) => {
-              // New format: {name, filter} object
-              if (typeof d === "object" && d.name) return d.name;
-              // Old string format fallback
-              if (typeof d !== "string") return null;
-              const m = d.match(/\*:\/\/(?:www\.)?([^/]+)/);
-              return m ? m[1].replace(/^\*\./, "") : null;
-            })
+            .map((d) => (typeof d === "object" && d.name ? d.name : null))
             .filter(Boolean),
         );
         blockCountEl.textContent =
@@ -571,7 +578,7 @@ function showUpgradeModal(context = "feature") {
             "Pro unlocks unlimited daily sessions. Don't stop when you're in flow.";
         }
         features.style.display = "block";
-        cta.textContent = "Go Unlimited — ₹499/year →";
+        cta.textContent = "Go Unlimited — $24/year →";
       }
 
       // ── CONTEXT: PRO FEATURE (custom sites, duration etc) ─
@@ -582,7 +589,7 @@ function showUpgradeModal(context = "feature") {
         body.textContent =
           "Unlock custom site blocking, longer sessions, full dashboard, and streak sync.";
         features.style.display = "block";
-        cta.textContent = "Unlock Pro — ₹499/year →";
+        cta.textContent = "Unlock Pro — $24/year →";
       }
 
       // ── CONTEXT: DASHBOARD ────────────────────────────────
@@ -591,7 +598,7 @@ function showUpgradeModal(context = "feature") {
         emoji.textContent = "📊";
         title.textContent = "See your full focus data.";
         body.textContent = `${totalSessions} sessions completed. Pro unlocks your complete history, streaks, and weekly reports.`;
-        cta.textContent = "Unlock Dashboard — ₹499/year →";
+        cta.textContent = "Unlock Dashboard — $24/year →";
       }
 
       // ── CONTEXT: STREAK (7-day nudge) ────────────────────
@@ -610,7 +617,7 @@ function showUpgradeModal(context = "feature") {
           body.textContent =
             "Pro users sync their streak across devices. Never lose your progress again.";
         }
-        cta.textContent = "Protect My Streak — ₹499/year →";
+        cta.textContent = "Protect My Streak — $24/year →";
       }
 
       // Show modal

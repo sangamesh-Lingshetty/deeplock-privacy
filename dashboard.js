@@ -3,6 +3,101 @@
 // Profile + Custom Sites + Supabase history
 // ================================
 
+// ================================
+// PRO GATE — blocks ALL rendering until license validated
+// Strategy: hide body instantly, validate, show or redirect
+// ================================
+// Flag set to true only after server confirms Pro — dashboard init waits for this
+window.__deepLockAllowed = false;
+
+(function proGate() {
+  // Hide everything immediately — no flash of dashboard content
+  document.documentElement.style.visibility = "hidden";
+
+  function showUpgradeWall() {
+    // Replace page content — no more extension JS will run after this
+    document.documentElement.style.visibility = "visible";
+    document.head.innerHTML = `
+      <meta charset="UTF-8"/>
+      <title>DeepLock Pro</title>
+      <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet"/>
+      <style>
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+        body{background:#060608;color:#efefef;font-family:'DM Sans',sans-serif;
+             display:flex;align-items:center;justify-content:center;
+             min-height:100vh;text-align:center;padding:32px}
+        .card{max-width:400px;width:100%}
+        .icon{font-size:40px;margin-bottom:20px}
+        h1{font-family:'Space Mono',monospace;font-size:22px;margin-bottom:12px}
+        p{color:#555;font-size:14px;line-height:1.7;margin-bottom:28px}
+        .features{display:flex;flex-direction:column;gap:8px;margin-bottom:28px;text-align:left}
+        .feat{font-size:13px;color:#444;display:flex;align-items:center;gap:10px}
+        .feat span:first-child{width:20px;text-align:center}
+        .btn-primary{display:block;width:100%;background:#3b82f6;color:#fff;
+                     border:none;border-radius:10px;padding:14px;font-size:15px;
+                     font-weight:700;cursor:pointer;margin-bottom:12px;
+                     font-family:'DM Sans',sans-serif;text-decoration:none;
+                     line-height:1.4}
+        .btn-primary:hover{background:#2563eb}
+        .btn-secondary{display:block;width:100%;background:none;color:#444;
+                       border:1px solid #1e1e1e;border-radius:10px;padding:12px;
+                       font-size:13px;cursor:pointer;font-family:'DM Sans',sans-serif}
+        .btn-secondary:hover{border-color:#333;color:#666}
+      </style>`;
+    document.body.innerHTML = `
+      <div class="card">
+        <div class="icon">⬛</div>
+        <h1>DeepLock Pro</h1>
+        <p>The dashboard is a Pro feature. Unlock full analytics, streak history, and scheduled sessions.</p>
+        <div class="features">
+          <div class="feat"><span>📊</span><span>Full focus analytics &amp; history</span></div>
+          <div class="feat"><span>🔥</span><span>Streak sync across devices</span></div>
+          <div class="feat"><span>📅</span><span>Scheduled sessions</span></div>
+          <div class="feat"><span>⏱</span><span>Unlimited session durations</span></div>
+        </div>
+        <a id="upgradeLink" class="btn-primary" href="https://deeplockproversion.lemonsqueezy.com/checkout/buy/7b55508e-ee4c-4a87-98ff-c7ddde0ba69a" target="_blank">
+          Unlock Pro — $24/year →
+        </a>
+        <button id="closeBtn" class="btn-secondary">Close</button>
+      </div>`;
+    // Attach events via JS — no inline onclick (CSP compliant)
+    document
+      .getElementById("closeBtn")
+      .addEventListener("click", () => window.close());
+  }
+
+  function allow() {
+    window.__deepLockAllowed = true;
+    document.documentElement.style.visibility = "visible";
+    // Trigger dashboard init if DOM already ready
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initDashboard);
+    } else {
+      initDashboard();
+    }
+  }
+
+  // Validate against server first
+  chrome.runtime.sendMessage({ action: "validateLicense" }, (res) => {
+    if (chrome.runtime.lastError) {
+      // SW waking up — ONLY trust local if instanceId exists (proves real purchase)
+      chrome.storage.local.get(["isPro", "licenseInstanceId"], (data) => {
+        if (data.isPro && data.licenseInstanceId) {
+          allow();
+        } else {
+          showUpgradeWall();
+        }
+      });
+      return;
+    }
+    if (res?.isPro) {
+      allow();
+    } else {
+      showUpgradeWall();
+    }
+  });
+})();
+
 const QUOTES = [
   "Discipline is the bridge between goals and accomplishment.",
   "Every session is a vote for who you're becoming.",
@@ -53,7 +148,9 @@ function setText(id, val) {
 // ================================
 // INIT
 // ================================
-document.addEventListener("DOMContentLoaded", () => {
+// Called by proGate only after license verified — never called directly
+function initDashboard() {
+  if (!window.__deepLockAllowed) return; // safety net
   setDateRange();
   setText(
     "motivationQuote",
@@ -67,11 +164,10 @@ document.addEventListener("DOMContentLoaded", () => {
   loadCustomSites();
   bindSiteEvents();
   bindProfileEvents();
-  // Always init schedule tab immediately — never lazy
-  // This ensures createSchedule button is always bound, regardless of which tab user clicks first
   initScheduleTab();
+  initSubscriptionManagement();
   schedTabInited = true;
-});
+}
 
 // ================================
 // DATE RANGE
@@ -199,16 +295,20 @@ function loadProfileTab() {
     ],
     (data) => {
       if (data.sbSignedIn && data.sbEmail) {
-        el("profileSignedOut").style.display = "none";
-        el("profileSignedIn").style.display = "block";
+        const pOut = el("profileSignedOut");
+        if (pOut) pOut.style.display = "none";
+        const pIn = el("profileSignedIn");
+        if (pIn) pIn.style.display = "block";
         setText("profileEmail", data.sbEmail);
         const avatar = el("profileAvatar");
         if (avatar) avatar.textContent = data.sbEmail[0].toUpperCase();
         setText("cloudSessions", data.totalSessions || 0);
         setText("cloudStreak", data.currentStreak || 0);
       } else {
-        el("profileSignedOut").style.display = "block";
-        el("profileSignedIn").style.display = "none";
+        const pOut = el("profileSignedOut");
+        if (pOut) pOut.style.display = "block";
+        const pIn = el("profileSignedIn");
+        if (pIn) pIn.style.display = "none";
       }
 
       // License key
@@ -1429,7 +1529,4 @@ function showCancelConfirmMessage() {
   setTimeout(() => msg.remove(), 8000);
 }
 
-// Init on page load
-document.addEventListener("DOMContentLoaded", () => {
-  initSubscriptionManagement();
-});
+// initSubscriptionManagement is called from initDashboard above
