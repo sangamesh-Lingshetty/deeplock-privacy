@@ -17,7 +17,53 @@
     "client_id": "523486634791-lnhttaq8cob6q42urt60uaouqag4oko6.apps.googleusercontent.com",
     "scopes": ["openid", "email", "profile"]
   },
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "https://www.instagram.com/*",
+    "https://instagram.com/*",
+    "https://www.x.com/*",
+    "https://x.com/*",
+    "https://www.twitter.com/*",
+    "https://twitter.com/*",
+    "https://www.youtube.com/*",
+    "https://youtube.com/*",
+    "https://youtu.be/*",
+    "https://www.reddit.com/*",
+    "https://reddit.com/*",
+    "https://redd.it/*",
+    "https://www.facebook.com/*",
+    "https://facebook.com/*",
+    "https://www.tiktok.com/*",
+    "https://tiktok.com/*",
+    "https://www.netflix.com/*",
+    "https://netflix.com/*",
+    "https://www.twitch.tv/*",
+    "https://twitch.tv/*",
+    "https://www.discord.com/*",
+    "https://discord.com/*",
+    "https://discordapp.com/*",
+    "https://app.discord.com/*",
+    "https://www.linkedin.com/*",
+    "https://linkedin.com/*",
+    "https://www.snapchat.com/*",
+    "https://snapchat.com/*",
+    "https://www.pinterest.com/*",
+    "https://pinterest.com/*",
+    "https://news.ycombinator.com/*",
+    "https://www.amazon.com/*",
+    "https://amazon.com/*",
+    "https://www.amazon.in/*",
+    "https://amazon.in/*",
+    "https://www.flipkart.com/*",
+    "https://flipkart.com/*",
+    "https://web.whatsapp.com/*",
+    "https://web.telegram.org/*",
+    "https://open.spotify.com/*",
+    "https://www.spotify.com/*",
+    "https://t.co/*",
+    "https://messenger.com/*",
+    "https://l.messenger.com/*",
+    "https://vm.tiktok.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -44,7 +90,8 @@
         "blocked.js",
         "supabase.js"
       ],
-      "matches": ["<all_urls>"]
+      "matches": ["<all_urls>"],
+      "use_dynamic_url": true
     }
   ]
 }
