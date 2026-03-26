@@ -9,8 +9,18 @@
 // ================================
 // Flag set to true only after server confirms Pro — dashboard init waits for this
 window.__deepLockAllowed = false;
+window.TEMP_BYPASS_PRO_FOR_TESTING = true;
 
 (function proGate() {
+  if (window.TEMP_BYPASS_PRO_FOR_TESTING) {
+    window.__deepLockAllowed = true;
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initDashboard);
+    } else {
+      initDashboard();
+    }
+    return;
+  }
   // Hide everything immediately — no flash of dashboard content
   document.documentElement.style.visibility = "hidden";
 
@@ -135,6 +145,39 @@ const POPULAR_SITES = [
   { name: "9GAG", filter: "||9gag.com^" },
 ];
 
+const DISTRACTING_DOMAINS = [
+  "youtube.com",
+  "twitter.com",
+  "instagram.com",
+  "reddit.com",
+  "facebook.com",
+  "tiktok.com",
+];
+
+const SMART_LOCK_PRESET_SITES = [
+  { name: "YouTube", domain: "youtube.com" },
+  { name: "X", domain: "x.com" },
+  { name: "Twitter", domain: "twitter.com" },
+  { name: "Instagram", domain: "instagram.com" },
+  { name: "Reddit", domain: "reddit.com" },
+  { name: "Facebook", domain: "facebook.com" },
+  { name: "TikTok", domain: "tiktok.com" },
+  { name: "Netflix", domain: "netflix.com" },
+  { name: "Twitch", domain: "twitch.tv" },
+  { name: "Discord", domain: "discord.com" },
+];
+const SMART_LOCK_DEFAULT_ENABLED = new Set([
+  "youtube.com",
+  "x.com",
+  "twitter.com",
+  "instagram.com",
+  "reddit.com",
+  "facebook.com",
+  "tiktok.com",
+]);
+
+const DASHBOARD_THEME_KEY = "dashboardTheme";
+
 let customSites = [];
 
 function el(id) {
@@ -145,12 +188,95 @@ function setText(id, val) {
   if (e) e.textContent = val;
 }
 
+function formatMinutes(mins) {
+  const safe = Math.max(0, Math.round(mins || 0));
+  const hours = Math.floor(safe / 60);
+  const remaining = safe % 60;
+
+  if (hours > 0 && remaining > 0) return `${hours}h ${remaining}m`;
+  if (hours > 0) return `${hours}h`;
+  return `${safe}m`;
+}
+
+function normalizeDomain(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/^\|\|/, "")
+    .replace(/\^$/, "")
+    .split("/")[0]
+    .trim();
+}
+
+function getSmartLockSites(customBlockedDomains, storedSettings, defaultMinutes) {
+  const presetSites = SMART_LOCK_PRESET_SITES.map((site) => ({
+    name: site.name,
+    domain: site.domain,
+  }));
+  const customSiteEntries = (customBlockedDomains || [])
+    .map((site) => ({
+      name: site.name || normalizeDomain(site.domain || site.filter),
+      domain: normalizeDomain(site.domain || site.filter),
+    }))
+    .filter((site) => site.domain);
+
+  const uniqueSites = [];
+  const seen = new Set();
+  [...presetSites, ...customSiteEntries].forEach((site) => {
+    if (!site.domain || seen.has(site.domain)) return;
+    seen.add(site.domain);
+    uniqueSites.push(site);
+  });
+
+  return uniqueSites.map((site) => {
+    const saved = storedSettings?.[site.domain] || {};
+    return {
+      ...site,
+      enabled:
+        saved.enabled !== undefined
+          ? !!saved.enabled
+          : SMART_LOCK_DEFAULT_ENABLED.has(site.domain),
+      minutes: Math.max(
+        1,
+        Math.min(180, parseInt(saved.minutes || defaultMinutes || 10, 10) || 10),
+      ),
+    };
+  });
+}
+
+function applyTheme(theme) {
+  const nextTheme = theme === "light" ? "light" : "dark";
+  document.body.dataset.theme = nextTheme;
+  setText(
+    "themeToggleText",
+    nextTheme === "light" ? "Light Mode" : "Dark Mode",
+  );
+  setText("themeToggleIcon", nextTheme === "light" ? "L" : "D");
+}
+
+function initTheme() {
+  chrome.storage.local.get([DASHBOARD_THEME_KEY], (data) => {
+    applyTheme(data[DASHBOARD_THEME_KEY] || "dark");
+  });
+
+  const btn = el("themeToggleBtn");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    const current = document.body.dataset.theme === "light" ? "light" : "dark";
+    const next = current === "light" ? "dark" : "light";
+    applyTheme(next);
+    chrome.storage.local.set({ [DASHBOARD_THEME_KEY]: next });
+  });
+}
+
 // ================================
 // INIT
 // ================================
 // Called by proGate only after license verified — never called directly
 function initDashboard() {
   if (!window.__deepLockAllowed) return; // safety net
+  initTheme();
   setDateRange();
   setText(
     "motivationQuote",
@@ -165,6 +291,8 @@ function initDashboard() {
   bindSiteEvents();
   bindProfileEvents();
   initScheduleTab();
+  initInsightsTab();
+  loadInsightsData();
   initSubscriptionManagement();
   schedTabInited = true;
 }
@@ -483,11 +611,123 @@ const ALL_SITES_FLAT = Object.values(SITE_CATEGORIES).flat();
 let activeCategory = "social";
 
 function loadCustomSites() {
-  chrome.storage.local.get(["customBlockedDomains"], (data) => {
-    customSites = data.customBlockedDomains || [];
-    renderCustomSites();
-    renderCategoryGrid(activeCategory);
-  });
+  chrome.storage.local.get(
+    ["customBlockedDomains", "autoKillEnabled", "autoKillMinutes", "autoKillSites"],
+    (data) => {
+      customSites = data.customBlockedDomains || [];
+      renderCustomSites();
+      renderCategoryGrid(activeCategory);
+      const enabledEl = el("autoKillEnabled");
+      const minutesEl = el("autoKillMinutes");
+      if (enabledEl) enabledEl.checked = !!data.autoKillEnabled;
+      if (minutesEl) minutesEl.value = data.autoKillMinutes || 10;
+      renderSmartLockSites(
+        getSmartLockSites(
+          customSites,
+          data.autoKillSites || {},
+          Number(data.autoKillMinutes) || 10,
+        ),
+        !!data.autoKillEnabled,
+      );
+    },
+  );
+}
+
+function renderSmartLockSites(sites, masterEnabled) {
+  const list = el("smartLockSitesList");
+  const state = el("smartLockSummaryState");
+  const count = el("smartLockSummaryCount");
+  if (!list) return;
+
+  const armedCount = sites.filter((site) => site.enabled).length;
+  if (state) state.textContent = masterEnabled ? "Enabled" : "Disabled";
+  if (count) count.textContent = `${armedCount} site${armedCount === 1 ? "" : "s"} armed`;
+
+  list.innerHTML = sites
+    .map(
+      (site) => `
+        <div class="smartlock-site-row ${masterEnabled ? "" : "is-disabled"}" data-domain="${site.domain}">
+          <div class="smartlock-site-main">
+            <img
+              class="smartlock-site-favicon"
+              src="https://www.google.com/s2/favicons?domain=${site.domain}&sz=32"
+              alt=""
+            />
+            <div class="smartlock-site-copy">
+              <div class="smartlock-site-name">${site.name}</div>
+              <div class="smartlock-site-domain">${site.domain}</div>
+            </div>
+          </div>
+          <label class="smartlock-mini-toggle">
+            <input class="smartlock-site-toggle" type="checkbox" data-domain="${site.domain}" ${site.enabled ? "checked" : ""} ${masterEnabled ? "" : "disabled"} />
+            <span class="smartlock-mini-slider"></span>
+          </label>
+          <div class="smartlock-site-minutes">
+            <input
+              class="smartlock-site-minutes-input"
+              type="number"
+              min="1"
+              max="180"
+              value="${site.minutes}"
+              data-domain="${site.domain}"
+              ${masterEnabled && site.enabled ? "" : "disabled"}
+            />
+            <span class="smartlock-site-minutes-unit">m</span>
+          </div>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function saveSmartLockSettings(partial = {}) {
+  chrome.storage.local.get(
+    ["customBlockedDomains", "autoKillSites", "autoKillMinutes", "autoKillEnabled"],
+    (data) => {
+      const nextMinutes =
+        partial.autoKillMinutes !== undefined
+          ? partial.autoKillMinutes
+          : Number(data.autoKillMinutes) || 10;
+      const nextMaster =
+        partial.autoKillEnabled !== undefined
+          ? partial.autoKillEnabled
+          : !!data.autoKillEnabled;
+      const baseSites = getSmartLockSites(
+        data.customBlockedDomains || [],
+        data.autoKillSites || {},
+        nextMinutes,
+      );
+
+      let nextSiteMap = Object.fromEntries(
+        baseSites.map((site) => [
+          site.domain,
+          { enabled: !!site.enabled, minutes: site.minutes, name: site.name },
+        ]),
+      );
+
+      if (partial.autoKillSites) {
+        nextSiteMap = { ...nextSiteMap, ...partial.autoKillSites };
+      }
+
+      chrome.storage.local.set(
+        {
+          autoKillEnabled: nextMaster,
+          autoKillMinutes: nextMinutes,
+          autoKillSites: nextSiteMap,
+        },
+        () => {
+          renderSmartLockSites(
+            getSmartLockSites(
+              data.customBlockedDomains || [],
+              nextSiteMap,
+              nextMinutes,
+            ),
+            nextMaster,
+          );
+        },
+      );
+    },
+  );
 }
 
 function renderCategoryGrid(cat) {
@@ -713,9 +953,35 @@ function saveAndRenderCustom() {
     domains: customSites,
   });
   renderCustomSites();
+  chrome.storage.local.get(["autoKillSites", "autoKillMinutes", "autoKillEnabled"], (data) => {
+    renderSmartLockSites(
+      getSmartLockSites(
+        customSites,
+        data.autoKillSites || {},
+        Number(data.autoKillMinutes) || 10,
+      ),
+      !!data.autoKillEnabled,
+    );
+  });
 }
 
 function bindSiteEvents() {
+  const autoKillEnabled = el("autoKillEnabled");
+  if (autoKillEnabled) {
+    autoKillEnabled.addEventListener("change", () => {
+      saveSmartLockSettings({ autoKillEnabled: autoKillEnabled.checked });
+    });
+  }
+
+  const autoKillMinutes = el("autoKillMinutes");
+  if (autoKillMinutes) {
+    autoKillMinutes.addEventListener("change", () => {
+      const value = Math.max(1, Math.min(180, parseInt(autoKillMinutes.value || "10", 10)));
+      autoKillMinutes.value = value;
+      saveSmartLockSettings({ autoKillMinutes: value });
+    });
+  }
+
   bindCategoryTabs();
   bindSmartSearch();
 
@@ -746,6 +1012,40 @@ function bindSiteEvents() {
       if (results) results.style.display = "none";
     }
   });
+
+  const smartLockList = el("smartLockSitesList");
+  if (smartLockList) {
+    smartLockList.addEventListener("change", (event) => {
+      const toggle = event.target.closest(".smartlock-site-toggle");
+      const minutesInput = event.target.closest(".smartlock-site-minutes-input");
+      if (toggle) {
+        const domain = toggle.dataset.domain;
+        saveSmartLockSettings({
+          autoKillSites: {
+            [domain]: {
+              enabled: toggle.checked,
+              minutes: parseInt(
+                smartLockList.querySelector(`.smartlock-site-minutes-input[data-domain="${domain}"]`)?.value || "10",
+                10,
+              ) || 10,
+            },
+          },
+        });
+      } else if (minutesInput) {
+        const domain = minutesInput.dataset.domain;
+        const value = Math.max(1, Math.min(180, parseInt(minutesInput.value || "10", 10) || 10));
+        minutesInput.value = value;
+        saveSmartLockSettings({
+          autoKillSites: {
+            [domain]: {
+              enabled: !!smartLockList.querySelector(`.smartlock-site-toggle[data-domain="${domain}"]`)?.checked,
+              minutes: value,
+            },
+          },
+        });
+      }
+    });
+  }
 }
 
 // ================================
@@ -925,6 +1225,554 @@ function renderHeatmap(daily) {
 }
 
 // ================================
+// INSIGHTS
+// ================================
+function initInsightsTab() {
+  if (window.TEMP_BYPASS_PRO_FOR_TESTING) {
+    renderInsightsGate(true);
+    return;
+  }
+
+  chrome.storage.local.get(["isPro"], (data) => {
+    renderInsightsGate(!!data.isPro);
+  });
+}
+
+function renderInsightsGate(isPro) {
+  const lock = el("insightsLock");
+  const content = el("insightsContent");
+  if (!lock || !content) return;
+
+  lock.style.display = isPro ? "none" : "block";
+  content.classList.remove("is-locked");
+}
+
+function getTrackedDayUsage(siteUsage, dateKey) {
+  const day = siteUsage?.[dateKey];
+  if (!day) return {};
+  if (day.sites && typeof day.sites === "object") return day.sites;
+  if (typeof day === "object") {
+    return Object.fromEntries(
+      Object.entries(day).filter(([key]) => key !== "date" && key !== "sites"),
+    );
+  }
+  return {};
+}
+
+function isDistractingDomain(domain) {
+  return DISTRACTING_DOMAINS.some(
+    (distracting) =>
+      domain === distracting || domain.endsWith(`.${distracting}`),
+  );
+}
+
+function getFocusScoreColor(score) {
+  if (score < 40) return "var(--red)";
+  if (score < 70) return "var(--orange)";
+  return "var(--green)";
+}
+
+function computeInsights(siteMap) {
+  const entries = Object.entries(siteMap || {})
+    .map(([domain, mins]) => ({ domain, mins: Number(mins) || 0 }))
+    .filter((entry) => entry.mins > 0)
+    .sort((a, b) => b.mins - a.mins);
+
+  const totalTime = entries.reduce((sum, entry) => sum + entry.mins, 0);
+  const distractingTime = entries.reduce(
+    (sum, entry) => sum + (isDistractingDomain(entry.domain) ? entry.mins : 0),
+    0,
+  );
+  const focusTime = Math.max(0, totalTime - distractingTime);
+  const focusScore =
+    totalTime > 0
+      ? Math.min(100, Math.max(0, Math.round((focusTime / totalTime) * 100)))
+      : 100;
+
+  return {
+    totalTime,
+    distractingTime,
+    focusTime,
+    focusScore,
+    topSites: entries.slice(0, 5),
+    biggestSite: entries[0] || null,
+  };
+}
+
+function getRecentDateKeys(daysBack) {
+  const keys = [];
+  for (let i = daysBack - 1; i >= 0; i--) {
+    const day = new Date();
+    day.setDate(day.getDate() - i);
+    keys.push(day.toISOString().split("T")[0]);
+  }
+  return keys;
+}
+
+function sumDistractingMinutes(siteMap) {
+  return Object.entries(siteMap || {}).reduce((sum, [domain, mins]) => {
+    if (!isDistractingDomain(domain)) return sum;
+    return sum + (Number(mins) || 0);
+  }, 0);
+}
+
+function getTopDistractionSource(siteUsage) {
+  const totals = {};
+  Object.keys(siteUsage || {}).forEach((dateKey) => {
+    const sites = getTrackedDayUsage(siteUsage, dateKey);
+    Object.entries(sites).forEach(([domain, mins]) => {
+      if (!isDistractingDomain(domain)) return;
+      totals[domain] = (totals[domain] || 0) + (Number(mins) || 0);
+    });
+  });
+
+  const biggest = Object.entries(totals).sort((a, b) => b[1] - a[1])[0];
+  return biggest ? { domain: biggest[0], mins: biggest[1] } : null;
+}
+
+function computeLifeImpact(siteUsage) {
+  const usage = siteUsage || {};
+  const trackedDateKeys = Object.keys(usage).filter((dateKey) => {
+    const sites = getTrackedDayUsage(usage, dateKey);
+    return Object.keys(sites).length > 0;
+  });
+
+  const totalWastedMinutes = trackedDateKeys.reduce((sum, dateKey) => {
+    return sum + sumDistractingMinutes(getTrackedDayUsage(usage, dateKey));
+  }, 0);
+
+  const todayKey = new Date().toISOString().split("T")[0];
+  const todayWasted = sumDistractingMinutes(getTrackedDayUsage(usage, todayKey));
+  const weekWasted = getRecentDateKeys(7).reduce((sum, dateKey) => {
+    return sum + sumDistractingMinutes(getTrackedDayUsage(usage, dateKey));
+  }, 0);
+  const monthWasted = getRecentDateKeys(30).reduce((sum, dateKey) => {
+    return sum + sumDistractingMinutes(getTrackedDayUsage(usage, dateKey));
+  }, 0);
+
+  const daysLostRaw = totalWastedMinutes / (60 * 24);
+  const daysLost = Number(daysLostRaw.toFixed(1));
+  const totalTrackedDays = Math.max(trackedDateKeys.length, 1);
+  const dailyAvg = totalWastedMinutes / totalTrackedDays;
+  const yearLossMinutes = dailyAvg * 365;
+  const yearLossDays = Math.round(yearLossMinutes / (60 * 24));
+  const biggestLeak = getTopDistractionSource(usage);
+
+  let psychLine = "You're still in control. Keep it that way.";
+  if (daysLostRaw > 20) {
+    psychLine = "That's nearly a month of your life gone.";
+  } else if (daysLostRaw > 5) {
+    psychLine = "You've already lost more than a week of your life.";
+  }
+
+  return {
+    totalWastedMinutes,
+    todayWasted,
+    weekWasted,
+    monthWasted,
+    daysLost,
+    daysLostRaw,
+    totalTrackedDays,
+    dailyAvg,
+    yearLossMinutes,
+    yearLossDays,
+    biggestLeak,
+    psychLine,
+  };
+}
+
+function getLast7DaysUsage(siteUsage) {
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const day = new Date();
+    day.setDate(day.getDate() - i);
+    const key = day.toISOString().split("T")[0];
+    const sites = getTrackedDayUsage(siteUsage, key);
+    const total = Object.values(sites).reduce(
+      (sum, mins) => sum + (Number(mins) || 0),
+      0,
+    );
+    days.push({
+      key,
+      shortLabel: i === 0 ? "Today" : day.toLocaleDateString("en-US", { weekday: "short" }),
+      total,
+    });
+  }
+  return days;
+}
+
+function formatHour(hour) {
+  if (hour === null || hour === undefined || Number.isNaN(hour)) return "--";
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const normalized = hour % 12 || 12;
+  return `${normalized} ${suffix}`;
+}
+
+function getFocusPatterns(sessionLog) {
+  const hourTotals = {};
+  const energyTotals = {};
+
+  (sessionLog || []).forEach((entry) => {
+    const mins = Number(entry.duration) || 0;
+    if (entry.hour !== undefined && entry.hour !== null) {
+      hourTotals[entry.hour] = (hourTotals[entry.hour] || 0) + mins;
+    }
+    if (entry.energyLevel) {
+      energyTotals[entry.energyLevel] =
+        (energyTotals[entry.energyLevel] || 0) + mins;
+    }
+  });
+
+  const peakHourEntry = Object.entries(hourTotals).sort((a, b) => b[1] - a[1])[0];
+  const bestEnergyEntry = Object.entries(energyTotals).sort((a, b) => b[1] - a[1])[0];
+
+  return {
+    peakHour:
+      peakHourEntry && Number(peakHourEntry[1]) > 0
+        ? Number(peakHourEntry[0])
+        : null,
+    bestEnergy:
+      bestEnergyEntry && Number(bestEnergyEntry[1]) > 0
+        ? Number(bestEnergyEntry[0])
+        : null,
+  };
+}
+
+function bindInsightsShare(insights, patterns) {
+  const btn = el("insightsShareBtn");
+  if (!btn) return;
+
+  btn.onclick = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1080;
+    canvas.height = 1350;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const gradient = ctx.createLinearGradient(0, 0, 1080, 1350);
+    gradient.addColorStop(0, "#0b1020");
+    gradient.addColorStop(1, "#111827");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#8ef0ad";
+    ctx.font = "700 30px Space Mono";
+    ctx.fillText("DEEPLOCK WEEK", 90, 120);
+
+    ctx.fillStyle = "#f8fafc";
+    ctx.font = "700 84px Space Mono";
+    ctx.fillText(`${insights.focusScore}`, 90, 280);
+    ctx.font = "500 32px DM Sans";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText("Focus Score", 90, 330);
+
+    ctx.fillStyle = "#f8fafc";
+    ctx.font = "700 56px Space Mono";
+    ctx.fillText(formatMinutes(insights.focusTime), 90, 500);
+    ctx.font = "500 28px DM Sans";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText("Focused today", 90, 545);
+
+    ctx.fillStyle = "#f8fafc";
+    ctx.font = "700 56px Space Mono";
+    ctx.fillText(`${patterns.streak || 0}d`, 90, 700);
+    ctx.font = "500 28px DM Sans";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText("Current streak", 90, 745);
+
+    ctx.fillStyle = "#dbeafe";
+    ctx.font = "600 30px DM Sans";
+    ctx.fillText(
+      patterns.peakHour
+        ? `Peak hour: ${formatHour(patterns.peakHour)}`
+        : "Peak hour: keep logging sessions",
+      90,
+      930,
+    );
+
+    const link = document.createElement("a");
+    link.href = canvas.toDataURL("image/png");
+    link.download = "deeplock-week.png";
+    link.click();
+  };
+}
+
+function renderInsightsTrendChart(days) {
+  const svg = el("insightsTrendChart");
+  const line = el("insightsChartLine");
+  const area = el("insightsChartArea");
+  const dots = el("insightsChartDots");
+  const labels = el("insightsChartLabels");
+  const grid = el("insightsChartGrid");
+  if (!svg || !line || !area || !dots || !labels || !grid) return;
+
+  const width = 640;
+  const height = 220;
+  const left = 20;
+  const right = 20;
+  const top = 18;
+  const bottom = 42;
+  const chartWidth = width - left - right;
+  const chartHeight = height - top - bottom;
+  const maxValue = Math.max(...days.map((day) => day.total), 60);
+  const stepX = days.length > 1 ? chartWidth / (days.length - 1) : chartWidth;
+
+  const points = days.map((day, index) => {
+    const x = left + stepX * index;
+    const y = top + chartHeight - (day.total / maxValue) * chartHeight;
+    return { ...day, x, y };
+  });
+
+  const lineD = points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+  const areaD = `${lineD} L ${points[points.length - 1].x} ${height - bottom} L ${points[0].x} ${height - bottom} Z`;
+
+  line.setAttribute("d", lineD);
+  area.setAttribute("d", areaD);
+  line.style.animation = "none";
+  void line.getBoundingClientRect();
+  line.style.animation = "";
+  grid.innerHTML = [0.25, 0.5, 0.75, 1]
+    .map((ratio) => {
+      const y = top + chartHeight - chartHeight * ratio;
+      return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" class="insights-chart-gridline"></line>`;
+    })
+    .join("");
+
+  dots.innerHTML = points
+    .map(
+      (point) => `
+        <g>
+          <circle cx="${point.x}" cy="${point.y}" r="4.5" class="insights-chart-dot"></circle>
+          <circle cx="${point.x}" cy="${point.y}" r="10" class="insights-chart-dot-ring"></circle>
+        </g>
+      `,
+    )
+    .join("");
+
+  labels.innerHTML = points
+    .map(
+      (point) => `
+        <div class="insights-chart-label">
+          <span class="insights-chart-day">${point.shortLabel}</span>
+          <span class="insights-chart-value">${formatMinutes(point.total)}</span>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderInsightsTopSites(topSites, totalTime) {
+  const list = el("insightsTopSites");
+  if (!list) return;
+
+  if (!topSites.length) {
+    list.innerHTML =
+      '<div class="insights-empty">No tracked browsing yet today. Open a few sites and DeepLock will start learning your pattern.</div>';
+    return;
+  }
+
+  const maxValue = Math.max(...topSites.map((site) => site.mins), 1);
+  list.innerHTML = topSites
+    .map((site) => {
+      const pct = totalTime > 0 ? Math.round((site.mins / totalTime) * 100) : 0;
+      const barPct = Math.max(8, Math.round((site.mins / maxValue) * 100));
+
+      return `
+        <div class="insights-site-row">
+          <div class="insights-site-main">
+            <div class="insights-site-meta">
+              <img
+                class="insights-site-favicon"
+                src="https://www.google.com/s2/favicons?domain=${site.domain}&sz=32"
+                alt=""
+              />
+              <div>
+                <div class="insights-site-domain">${site.domain}</div>
+                <div class="insights-site-time">${formatMinutes(site.mins)}</div>
+              </div>
+            </div>
+            <div class="insights-site-pct">${pct}%</div>
+          </div>
+          <div class="insights-site-bar">
+            <div class="insights-site-barfill" style="width:${barPct}%"></div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function renderLifeImpact(lifeImpact, isPro) {
+  setText(
+    "insightsLifeMainline",
+    `You've lost ${lifeImpact.daysLost.toFixed(1)} days of your life`,
+  );
+  setText(
+    "insightsLifeSubline",
+    `Equivalent to ${formatMinutes(lifeImpact.totalWastedMinutes)} of distracted time.`,
+  );
+  setText("insightsLifeToday", formatMinutes(lifeImpact.todayWasted));
+  setText("insightsLifeWeek", formatMinutes(lifeImpact.weekWasted));
+  setText("insightsLifeMonth", formatMinutes(lifeImpact.monthWasted));
+  setText("insightsLifePsych", lifeImpact.psychLine);
+  setText(
+    "insightsLifeProjection",
+    `At this pace, you will lose ${lifeImpact.yearLossDays} days this year`,
+  );
+  setText(
+    "insightsLifeSource",
+    lifeImpact.biggestLeak
+      ? `Biggest leak: ${lifeImpact.biggestLeak.domain} (${formatMinutes(lifeImpact.biggestLeak.mins)})`
+      : "Biggest leak: not enough distraction data yet",
+  );
+  setText("insightsLifeDaysLost", lifeImpact.daysLost.toFixed(1));
+  setText(
+    "insightsLifeCaption",
+    lifeImpact.totalTrackedDays > 0
+      ? `Tracked across ${lifeImpact.totalTrackedDays} day${lifeImpact.totalTrackedDays !== 1 ? "s" : ""}.`
+      : "Based on your total tracked distraction time.",
+  );
+
+  const proWrap = el("insightsLifeProWrap");
+  if (proWrap) proWrap.classList.toggle("is-locked", !isPro);
+  const premiumCopy = el("insightsLifePremiumCopy");
+  if (premiumCopy) premiumCopy.classList.toggle("is-locked", !isPro);
+  const monthStat = el("insightsLifeMonthStat");
+  if (monthStat) monthStat.classList.toggle("is-locked", !isPro);
+  const visual = el("insightsLifeVisual");
+  if (visual) visual.classList.toggle("is-locked", !isPro);
+
+  const ring = el("insightsLifeRingProgress");
+  if (ring) {
+    const radius = 62;
+    const circumference = 2 * Math.PI * radius;
+    const projectedLossPct = Math.max(
+      0,
+      Math.min(100, Math.round((lifeImpact.yearLossDays / 90) * 100)),
+    );
+    ring.style.strokeDasharray = `${circumference}`;
+    ring.style.strokeDashoffset = `${circumference * (1 - projectedLossPct / 100)}`;
+  }
+}
+
+function renderInsights(insights, allUsage, sessionLog, streak, isPro) {
+  const {
+    totalTime,
+    distractingTime,
+    focusTime,
+    focusScore,
+    topSites,
+    biggestSite,
+  } = insights;
+
+  setText("insightsRange", "TODAY");
+  setText("insightsTotalTime", `${formatMinutes(totalTime)} total`);
+  setText("insightsFocusTime", formatMinutes(focusTime));
+  setText("insightsDistractingTime", formatMinutes(distractingTime));
+  setText("insightsFocusScore", focusScore);
+
+  const scoreEl = el("insightsFocusScore");
+  if (scoreEl) scoreEl.style.color = getFocusScoreColor(focusScore);
+
+  const qualityEl = el("insightsQualityLabel");
+  if (qualityEl) {
+    if (focusScore > 70) qualityEl.textContent = "Great day";
+    else if (focusScore >= 40) qualityEl.textContent = "Average";
+    else qualityEl.textContent = "Distracted";
+  }
+
+  const scoreSub = el("insightsScoreSub");
+  if (scoreSub) {
+    if (totalTime <= 0) {
+      scoreSub.textContent = "No tracked website time yet today.";
+    } else if (focusScore >= 70) {
+      scoreSub.textContent = "Strong day so far. Your focused browsing is winning.";
+    } else if (focusScore >= 40) {
+      scoreSub.textContent = "Mixed signal. A few distractions are eating into your day.";
+    } else {
+      scoreSub.textContent = "Heavy distraction day so far. Time to tighten the loop.";
+    }
+  }
+
+  const focusPct =
+    totalTime > 0 ? Math.round((focusTime / totalTime) * 100) : 100;
+  const distractPct = Math.max(0, 100 - focusPct);
+  const focusBar = el("insightsFocusBar");
+  const distractBar = el("insightsDistractBar");
+  if (focusBar) focusBar.style.width = `${focusPct}%`;
+  if (distractBar) distractBar.style.width = `${distractPct}%`;
+
+  const patterns = getFocusPatterns(sessionLog || []);
+  setText(
+    "insightsPeakHour",
+    patterns.peakHour !== null
+      ? `You focus best at ${formatHour(patterns.peakHour)}`
+      : "Peak focus hour needs more sessions",
+  );
+  setText(
+    "insightsBestEnergy",
+    patterns.bestEnergy
+      ? `You focus best when energy = ${patterns.bestEnergy}`
+      : "Track energy for a few sessions",
+  );
+
+  const messageEl = el("insightsMessage");
+  if (messageEl) {
+    if (!biggestSite) {
+      messageEl.textContent =
+        "No browsing data yet today. DeepLock will build this view as soon as you spend time on websites.";
+    } else if (isDistractingDomain(biggestSite.domain)) {
+      messageEl.textContent = `Your biggest distraction was ${biggestSite.domain} (${formatMinutes(biggestSite.mins)}) today.`;
+    } else {
+      messageEl.textContent = `You spent ${formatMinutes(biggestSite.mins)} on ${biggestSite.domain} today.`;
+    }
+  }
+
+  renderInsightsTrendChart(getLast7DaysUsage(allUsage || {}));
+  renderInsightsTopSites(topSites, totalTime);
+  renderLifeImpact(computeLifeImpact(allUsage || {}), !!isPro);
+  bindInsightsShare(insights, { ...patterns, streak });
+}
+
+function loadInsightsData() {
+  if (window.TEMP_BYPASS_PRO_FOR_TESTING) {
+    chrome.storage.local.get(["siteUsage", "focusSessionLog", "currentStreak"], (data) => {
+      renderInsightsGate(true);
+      const today = new Date().toISOString().split("T")[0];
+      const usage = getTrackedDayUsage(data.siteUsage || {}, today);
+      renderInsights(
+        computeInsights(usage),
+        data.siteUsage || {},
+        data.focusSessionLog || [],
+        data.currentStreak || 0,
+        true,
+      );
+    });
+    return;
+  }
+
+  chrome.storage.local.get(
+    ["isPro", "siteUsage", "focusSessionLog", "currentStreak"],
+    (data) => {
+    const isPro = !!data.isPro;
+    renderInsightsGate(isPro);
+
+    const today = new Date().toISOString().split("T")[0];
+    const usage = getTrackedDayUsage(data.siteUsage || {}, today);
+      renderInsights(
+        computeInsights(usage),
+        data.siteUsage || {},
+        data.focusSessionLog || [],
+        data.currentStreak || 0,
+        isPro,
+      );
+    },
+  );
+}
+
+// ================================
 // TAB NAV
 // ================================
 function bindTabNav() {
@@ -933,19 +1781,25 @@ function bindTabNav() {
       e.preventDefault();
       const tab = item.dataset.tab;
       if (!tab) return;
-      document
-        .querySelectorAll(".nav-item")
-        .forEach((n) => n.classList.remove("active"));
-      item.classList.add("active");
-      document
-        .querySelectorAll(".tab-content")
-        .forEach((t) => t.classList.remove("active"));
-      const tabEl = el(`tab-${tab}`);
-      if (tabEl) tabEl.classList.add("active");
-      // Lazy-init schedule tab on first click
-      if (tab === "schedule") maybeInitScheduleTab();
+      activateDashboardTab(tab);
     });
   });
+
+  const hashTab = location.hash.replace("#", "");
+  if (hashTab) activateDashboardTab(hashTab);
+}
+
+function activateDashboardTab(tab) {
+  document
+    .querySelectorAll(".nav-item")
+    .forEach((n) => n.classList.toggle("active", n.dataset.tab === tab));
+  document
+    .querySelectorAll(".tab-content")
+    .forEach((t) => t.classList.remove("active"));
+  const tabEl = el(`tab-${tab}`);
+  if (tabEl) tabEl.classList.add("active");
+  if (tab === "schedule") maybeInitScheduleTab();
+  if (tab === "insights") loadInsightsData();
 }
 
 // ================================

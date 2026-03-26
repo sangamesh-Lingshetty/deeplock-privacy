@@ -79,6 +79,21 @@
           rows="2"
         ></textarea>
 
+        <div class="energy-card">
+          <div class="energy-label">Energy level right now</div>
+          <div class="energy-row">
+            <button class="energy-btn" data-energy="1" type="button">
+              Low
+            </button>
+            <button class="energy-btn" data-energy="2" type="button">
+              Medium
+            </button>
+            <button class="energy-btn" data-energy="3" type="button">
+              High
+            </button>
+          </div>
+        </div>
+
         <!-- TIME SELECTION -->
         <div class="time-grid">
           <button class="time-btn" data-min="25">25<span>min</span></button>
@@ -132,6 +147,11 @@
         <div class="blocks-info" id="blocksInfo">
           <span class="blocks-dot"></span>
           <span id="blocksText">Loading...</span>
+        </div>
+
+        <div class="focus-score-pill" id="focusScorePill">
+          <span class="focus-score-label">Focus Score</span>
+          <span class="focus-score-value" id="popupFocusScore">--</span>
         </div>
 
         <!-- FREE SESSION LIMIT BAR -->

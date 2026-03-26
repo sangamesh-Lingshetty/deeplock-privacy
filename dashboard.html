@@ -18,7 +18,7 @@
           <span class="brand-icon">⬛</span
           ><span class="brand-name">DeepLock</span>
         </div>
-        <div class="pro-tag">PRO</div>
+        <div class="pro-tag">DASHBOARD</div>
         <nav class="nav">
           <a class="nav-item active" data-tab="overview">
             <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
@@ -118,8 +118,26 @@
             </svg>
             Schedule
           </a>
+          <a class="nav-item" data-tab="insights">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
+              <path
+                d="M2 12.5h11"
+                stroke="currentColor"
+                stroke-width="1.2"
+                stroke-linecap="round"
+              />
+              <rect x="3" y="7" width="2" height="4" rx=".7" />
+              <rect x="6.5" y="4.5" width="2" height="6.5" rx=".7" />
+              <rect x="10" y="2.5" width="2" height="8.5" rx=".7" />
+            </svg>
+            Insights
+          </a>
         </nav>
         <div class="sidebar-footer">
+          <button class="theme-toggle" id="themeToggleBtn" type="button">
+            <span class="theme-toggle-icon" id="themeToggleIcon">D</span>
+            <span class="theme-toggle-text" id="themeToggleText">Dark Mode</span>
+          </button>
           <div class="session-status">
             <span class="status-dot" id="statusDot"></span>
             <span id="statusLabel">No active session</span>
@@ -313,6 +331,55 @@
           <div class="card" style="margin-bottom: 16px">
             <div class="sites-section-title">Always blocked (default)</div>
             <div class="default-sites-grid" id="defaultSitesGrid"></div>
+          </div>
+
+          <div class="card" style="margin-bottom: 16px">
+            <div class="sites-section-header">
+              <div>
+                <div class="sites-section-title">Smart Lock (Auto Kill)</div>
+                <div class="smartlock-copy">
+                  Automatically interrupts you when you spend too long on selected
+                  sites.
+                </div>
+              </div>
+              <label class="smartlock-toggle">
+                <input type="checkbox" id="autoKillEnabled" />
+                <span class="smartlock-slider"></span>
+              </label>
+            </div>
+            <div class="smartlock-row">
+              <label class="smartlock-input-label" for="autoKillMinutes">
+                Default trigger
+              </label>
+              <div class="smartlock-input-wrap">
+                <input
+                  id="autoKillMinutes"
+                  class="smartlock-input"
+                  type="number"
+                  min="1"
+                  max="180"
+                  value="10"
+                />
+                <span class="smartlock-input-unit">min</span>
+              </div>
+            </div>
+            <div class="smartlock-summary-row">
+              <div class="smartlock-summary-chip" id="smartLockSummaryState">
+                Disabled
+              </div>
+              <div class="smartlock-summary-chip" id="smartLockSummaryCount">
+                0 sites armed
+              </div>
+            </div>
+            <div class="smartlock-sites-head">
+              <span>Armed sites</span>
+              <span>Minutes</span>
+            </div>
+            <div class="smartlock-sites-list" id="smartLockSitesList">
+              <div class="empty-sites">
+                Turn Smart Lock on to configure sites.
+              </div>
+            </div>
           </div>
 
           <!-- CUSTOM SITES CARD -->
@@ -858,6 +925,235 @@
               <div class="sched-empty-text">No sessions scheduled yet.</div>
               <div class="sched-empty-sub">
                 Set one up above — DeepLock will lock automatically.
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- INSIGHTS -->
+        <div id="tab-insights" class="tab-content">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Insights</h1>
+              <p class="page-sub">
+                See where your time actually goes across the web
+              </p>
+            </div>
+            <div class="sync-source-badge" id="insightsRange">TODAY</div>
+          </div>
+
+          <div id="insightsLock" class="insights-lock" style="display: none">
+            <div class="insights-lock-card">
+              <div class="insights-lock-badge">PRO INSIGHTS</div>
+              <div class="insights-lock-title">Track your real browsing patterns.</div>
+              <div class="insights-lock-body">
+                Unlock top sites, distraction breakdowns, and a daily focus
+                score built from your website usage.
+              </div>
+              <a
+                class="insights-lock-cta"
+                href="https://deeplockproversion.lemonsqueezy.com/checkout/buy/7b55508e-ee4c-4a87-98ff-c7ddde0ba69a"
+                target="_blank"
+              >
+                Unlock Pro - $24/year
+              </a>
+            </div>
+          </div>
+
+          <div id="insightsContent">
+            <div class="card insights-chart-card">
+              <div class="card-header">
+                <div class="card-title">Usage Trend</div>
+                <button class="insights-share-btn" id="insightsShareBtn">
+                  Share your week
+                </button>
+              </div>
+              <div class="page-sub" style="margin-bottom: 10px">
+                Last 7 days of tracked browsing
+              </div>
+              <div class="insights-chart-wrap">
+                <svg
+                  class="insights-chart-svg"
+                  id="insightsTrendChart"
+                  viewBox="0 0 640 220"
+                  preserveAspectRatio="none"
+                >
+                  <defs>
+                    <linearGradient id="insightsAreaGradient" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.28"></stop>
+                      <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.02"></stop>
+                    </linearGradient>
+                  </defs>
+                  <g id="insightsChartGrid"></g>
+                  <path id="insightsChartArea" class="insights-chart-area"></path>
+                  <path id="insightsChartLine" class="insights-chart-line"></path>
+                  <g id="insightsChartDots"></g>
+                </svg>
+                <div class="insights-chart-labels" id="insightsChartLabels"></div>
+              </div>
+            </div>
+
+            <div class="cards-row insights-hero-row">
+              <div class="card insights-focus-card">
+                <div class="card-title">Focus Score</div>
+                <div class="insights-score-wrap">
+                  <div class="insights-score-num" id="insightsFocusScore">0</div>
+                <div class="insights-score-label">Focus Score</div>
+              </div>
+              <div class="insights-quality" id="insightsQualityLabel">
+                Great day
+              </div>
+              <div class="insights-score-sub" id="insightsScoreSub">
+                Calculated from your focus vs distracting time.
+              </div>
+            </div>
+
+              <div class="card insights-message-card">
+                <div class="card-title">Daily Insight</div>
+                <div class="insights-message" id="insightsMessage">
+                  We'll surface your biggest time sink here.
+                </div>
+              </div>
+            </div>
+
+            <div class="card insights-breakdown-card">
+              <div class="card-header">
+                <div class="card-title">Usage Breakdown</div>
+                <div class="insights-total" id="insightsTotalTime">0m total</div>
+              </div>
+              <div class="insights-breakdown-stats">
+                <div class="insights-breakdown-stat focus">
+                  <span class="insights-breakdown-dot"></span>
+                  <span class="insights-breakdown-name">Focus Time</span>
+                  <span class="insights-breakdown-val" id="insightsFocusTime">0m</span>
+                </div>
+                <div class="insights-breakdown-stat distract">
+                  <span class="insights-breakdown-dot"></span>
+                  <span class="insights-breakdown-name">Distracting Time</span>
+                  <span class="insights-breakdown-val" id="insightsDistractingTime">0m</span>
+                </div>
+              </div>
+              <div class="insights-splitbar">
+                <div class="insights-splitbar-focus" id="insightsFocusBar"></div>
+                <div class="insights-splitbar-distract" id="insightsDistractBar"></div>
+              </div>
+              <div class="insights-patterns">
+                <div class="insights-pattern-chip" id="insightsPeakHour">
+                  You focus best at --
+                </div>
+                <div class="insights-pattern-chip" id="insightsBestEnergy">
+                  Energy pattern loading
+                </div>
+              </div>
+            </div>
+
+            <div class="card insights-sites-card">
+              <div class="card-header">
+                <div class="card-title">Top Sites Today</div>
+                <div class="page-sub">Top 5 by time spent</div>
+              </div>
+              <div class="insights-sites-list" id="insightsTopSites">
+                <div class="insights-empty">
+                  Browse a little and your top sites will appear here.
+                </div>
+              </div>
+            </div>
+
+            <div class="card insights-life-card">
+              <div class="card-header">
+                <div>
+                  <div class="card-title">Life Impact</div>
+                  <div class="page-sub">
+                    How much time distractions are quietly taking from you
+                  </div>
+                </div>
+              </div>
+
+              <div class="insights-life-grid">
+                <div class="insights-life-copy">
+                  <div class="insights-life-premium" id="insightsLifePremiumCopy">
+                    <div class="insights-life-mainline" id="insightsLifeMainline">
+                      You've lost 0.0 days of your life
+                    </div>
+                    <div class="insights-life-subline" id="insightsLifeSubline">
+                      Equivalent to 0h of distracted time.
+                    </div>
+                  </div>
+
+                  <div class="insights-life-breakdown">
+                    <div class="insights-life-stat">
+                      <span class="insights-life-label">Today</span>
+                      <span class="insights-life-value" id="insightsLifeToday">0m</span>
+                    </div>
+                    <div class="insights-life-stat">
+                      <span class="insights-life-label">This week</span>
+                      <span class="insights-life-value" id="insightsLifeWeek">0m</span>
+                    </div>
+                    <div class="insights-life-stat" id="insightsLifeMonthStat">
+                      <span class="insights-life-label">This month</span>
+                      <span class="insights-life-value" id="insightsLifeMonth">0m</span>
+                    </div>
+                  </div>
+
+                  <div class="insights-life-psych" id="insightsLifePsych">
+                    You're still in control. Keep it that way.
+                  </div>
+
+                  <div
+                    class="insights-life-pro-wrap"
+                    id="insightsLifeProWrap"
+                  >
+                    <div class="insights-life-pro-content" id="insightsLifeProContent">
+                      <div class="insights-life-projection" id="insightsLifeProjection">
+                        At this pace, you will lose 0 days this year.
+                      </div>
+                      <div class="insights-life-source" id="insightsLifeSource">
+                        Biggest leak: --
+                      </div>
+                    </div>
+                    <div class="insights-life-pro-overlay" id="insightsLifeOverlay">
+                      Unlock to see your lifetime loss and yearly projection
+                    </div>
+                  </div>
+                </div>
+
+                <div class="insights-life-visual" id="insightsLifeVisual">
+                  <div class="insights-life-ring">
+                    <svg
+                      class="insights-life-ring-svg"
+                      viewBox="0 0 160 160"
+                      aria-hidden="true"
+                    >
+                      <defs>
+                        <linearGradient id="insightsLifeRingGradient" x1="0" x2="1" y1="0" y2="1">
+                          <stop offset="0%" stop-color="#fb7185"></stop>
+                          <stop offset="100%" stop-color="#ef4444"></stop>
+                        </linearGradient>
+                      </defs>
+                      <circle
+                        class="insights-life-ring-track"
+                        cx="80"
+                        cy="80"
+                        r="62"
+                      ></circle>
+                      <circle
+                        class="insights-life-ring-progress"
+                        id="insightsLifeRingProgress"
+                        cx="80"
+                        cy="80"
+                        r="62"
+                      ></circle>
+                    </svg>
+                    <div class="insights-life-ring-center">
+                      <div class="insights-life-ring-number" id="insightsLifeDaysLost">
+                        0.0
+                      </div>
+                      <div class="insights-life-ring-label">days lost</div>
+                    </div>
+                  </div>
+                  <div class="insights-life-ring-caption" id="insightsLifeCaption">
+                    Based on your total tracked distraction time.
+                  </div>
+                </div>
               </div>
             </div>
           </div>

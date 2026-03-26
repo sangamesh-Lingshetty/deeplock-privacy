@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Stop Scrolling</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top, rgba(239,68,68,.16), transparent 40%),
+          #08090d;
+        color: #f8fafc;
+        font-family: "DM Sans", sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 18px;
+      }
+      .card {
+        width: 100%;
+        background: rgba(17, 20, 27, 0.96);
+        border: 1px solid rgba(239,68,68,.18);
+        border-radius: 24px;
+        padding: 30px 24px;
+        text-align: center;
+        box-shadow: 0 18px 60px rgba(0,0,0,.42);
+      }
+      .eyebrow {
+        font: 700 10px "Space Mono", monospace;
+        color: #f87171;
+        letter-spacing: 2px;
+        margin-bottom: 18px;
+      }
+      h1 {
+        font: 700 30px "Space Mono", monospace;
+        margin-bottom: 12px;
+      }
+      .message {
+        color: #cbd5e1;
+        line-height: 1.8;
+        margin-bottom: 24px;
+      }
+      .domain-pill {
+        display: inline-block;
+        margin-bottom: 24px;
+        border-radius: 999px;
+        padding: 8px 12px;
+        background: rgba(255,255,255,.05);
+        border: 1px solid rgba(255,255,255,.08);
+        font: 700 12px "Space Mono", monospace;
+      }
+      .actions {
+        display: grid;
+        gap: 12px;
+      }
+      button {
+        border: none;
+        border-radius: 14px;
+        padding: 14px 16px;
+        font: 700 14px "DM Sans", sans-serif;
+        cursor: pointer;
+      }
+      .primary { background: #ef4444; color: #fff; }
+      .secondary {
+        background: #161c28;
+        color: #e2e8f0;
+        border: 1px solid rgba(255,255,255,.08);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="eyebrow">SMART LOCK</div>
+      <h1>Stop Scrolling ⚠️</h1>
+      <div class="domain-pill" id="killDomain">youtube.com</div>
+      <div class="message" id="killMessage">
+        You've already spent 10 minutes on YouTube.
+      </div>
+      <div class="actions">
+        <button class="primary" id="lockNowBtn">Lock Now</button>
+        <button class="secondary" id="continueBtn">Continue Anyway</button>
+      </div>
+    </div>
+    <script src="auto_kill.js"></script>
+  </body>
+</html>

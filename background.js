@@ -26,6 +26,28 @@ const DEFAULT_BLOCKED_DOMAINS = [
   { name: "Discord", filter: "||discord.com^" },
 ];
 
+const SMART_LOCK_PRESET_SITES = [
+  { name: "YouTube", domain: "youtube.com" },
+  { name: "X", domain: "x.com" },
+  { name: "Twitter", domain: "twitter.com" },
+  { name: "Instagram", domain: "instagram.com" },
+  { name: "Reddit", domain: "reddit.com" },
+  { name: "Facebook", domain: "facebook.com" },
+  { name: "TikTok", domain: "tiktok.com" },
+  { name: "Netflix", domain: "netflix.com" },
+  { name: "Twitch", domain: "twitch.tv" },
+  { name: "Discord", domain: "discord.com" },
+];
+const SMART_LOCK_DEFAULT_ENABLED = new Set([
+  "youtube.com",
+  "x.com",
+  "twitter.com",
+  "instagram.com",
+  "reddit.com",
+  "facebook.com",
+  "tiktok.com",
+]);
+
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const INACTIVITY_48H = 48 * 60 * 60 * 1000;
 const UNLOCK_ALARM = "unlockAlarm";
@@ -34,6 +56,303 @@ const INACTIVITY_ALARM = "inactivityCheck";
 const MORNING_ALARM = "morningCheck";
 const EVENING_ALARM = "eveningCheck";
 const FREE_SESSION_LIMIT = 4;
+const SITE_USAGE_KEY = "siteUsage";
+const SITE_USAGE_TRACKING_KEY = "siteUsageTrackingState";
+const SESSION_LOG_KEY = "focusSessionLog";
+let isSessionActive = false;
+let autoKillCurrentDomain = null;
+let autoKillStartTime = null;
+let autoKillInterval = null;
+let autoKillPopupWindowId = null;
+let autoKillPopupOpen = false;
+let autoKillTriggerMinutes = null;
+
+function clearAutoKillTimer(resetDomain = true) {
+  if (autoKillInterval) {
+    clearInterval(autoKillInterval);
+    autoKillInterval = null;
+  }
+  if (resetDomain) {
+    autoKillCurrentDomain = null;
+    autoKillStartTime = null;
+    autoKillTriggerMinutes = null;
+  }
+}
+
+function clearSessionRuntime(callback) {
+  isSessionActive = false;
+  disableBlocking(() => {
+    chrome.alarms.clear(UNLOCK_ALARM);
+    chrome.runtime.setUninstallURL("", () => {
+      void chrome.runtime.lastError;
+      if (typeof callback === "function") callback();
+    });
+  });
+}
+
+function resetStoredSessionState(extra = {}) {
+  chrome.storage.local.set({
+    isLocked: false,
+    lockEndTime: null,
+    blockedDomains: [],
+    sessionDuration: null,
+    sessionStartTime: null,
+    focusIntent: "",
+    lastFocusTime: null,
+    sessionPinHash: null,
+    sessionEnergyLevel: null,
+    sessionBlockedAttempts: 0,
+    scheduledSessionId: null,
+    ...extra,
+  });
+}
+
+function normalizeAutoKillDomain(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/^\|\|/, "")
+    .replace(/\^$/, "")
+    .split("/")[0]
+    .trim();
+}
+
+function buildAutoKillSiteSettings(customBlockedDomains, storedSettings, fallbackMinutes) {
+  const presetSites = SMART_LOCK_PRESET_SITES.map((site) => ({
+    name: site.name,
+    domain: site.domain,
+  }));
+  const customSites = (customBlockedDomains || [])
+    .map((site) => ({
+      name: site.name || normalizeAutoKillDomain(site.domain || site.filter),
+      domain: normalizeAutoKillDomain(site.domain || site.filter),
+    }))
+    .filter((site) => site.domain);
+
+  const uniqueSites = [];
+  const seen = new Set();
+  [...presetSites, ...customSites].forEach((site) => {
+    if (!site.domain || seen.has(site.domain)) return;
+    seen.add(site.domain);
+    uniqueSites.push(site);
+  });
+
+  return uniqueSites.map((site) => {
+    const saved = storedSettings?.[site.domain] || {};
+    return {
+      name: site.name,
+      domain: site.domain,
+      enabled:
+        saved.enabled !== undefined
+          ? !!saved.enabled
+          : SMART_LOCK_DEFAULT_ENABLED.has(site.domain),
+      minutes: Math.max(
+        1,
+        Math.min(180, parseInt(saved.minutes || fallbackMinutes || 10, 10) || 10),
+      ),
+    };
+  });
+}
+
+async function getAutoKillSiteSettings() {
+  const data = await chrome.storage.local.get([
+    "customBlockedDomains",
+    "autoKillSites",
+    "autoKillMinutes",
+  ]);
+  return buildAutoKillSiteSettings(
+    data.customBlockedDomains || [],
+    data.autoKillSites || {},
+    Number(data.autoKillMinutes) || 10,
+  );
+}
+
+async function getAutoKillMatch(domain) {
+  if (!domain) return null;
+  const settings = await getAutoKillSiteSettings();
+  return (
+    settings.find(
+      (site) =>
+        site.enabled &&
+        (domain === site.domain || domain.endsWith(`.${site.domain}`)),
+    ) || null
+  );
+}
+
+async function triggerKillSwitch(domain, autoKillMinutes) {
+  if (autoKillPopupOpen) return;
+  autoKillPopupOpen = true;
+  await chrome.storage.local.set({
+    autoKillIntervention: {
+      domain,
+      minutes: autoKillMinutes,
+      triggeredAt: Date.now(),
+    },
+  });
+
+  chrome.windows.create(
+    {
+      url: chrome.runtime.getURL("auto_kill.html"),
+      type: "popup",
+      width: 460,
+      height: 560,
+      focused: true,
+    },
+    (win) => {
+      autoKillPopupWindowId = win?.id || null;
+    },
+  );
+}
+
+async function maybeTrackAutoKill(tab) {
+  const settings = await chrome.storage.local.get(["autoKillEnabled", "autoKillMinutes"]);
+  if (!settings.autoKillEnabled) {
+    clearAutoKillTimer();
+    return;
+  }
+
+  const domain = normalizeTrackedDomain(tab?.url);
+  const matchedSite = await getAutoKillMatch(domain);
+  if (!matchedSite) {
+    clearAutoKillTimer();
+    return;
+  }
+
+  if (autoKillCurrentDomain === domain && autoKillStartTime) {
+    return;
+  }
+
+  clearAutoKillTimer(false);
+  autoKillCurrentDomain = domain;
+  autoKillStartTime = Date.now();
+  autoKillTriggerMinutes = matchedSite.minutes;
+
+  autoKillInterval = setInterval(async () => {
+    if (!autoKillCurrentDomain || autoKillPopupOpen) return;
+    const elapsed = Date.now() - autoKillStartTime;
+    if (elapsed >= autoKillTriggerMinutes * 60 * 1000) {
+      clearAutoKillTimer(false);
+      await triggerKillSwitch(autoKillCurrentDomain, autoKillTriggerMinutes);
+    }
+  }, 1000);
+}
+
+function getTodayKey() {
+  return new Date().toISOString().split("T")[0];
+}
+
+function normalizeTrackedDomain(url) {
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) return null;
+    return parsed.hostname.toLowerCase().replace(/^www\./, "");
+  } catch (_) {
+    return null;
+  }
+}
+
+async function addSiteUsage(domain, elapsedMs) {
+  if (!domain || !elapsedMs || elapsedMs < 5000) return;
+
+  const elapsedMinutes = elapsedMs / 60000;
+  const today = getTodayKey();
+  const data = await chrome.storage.local.get([SITE_USAGE_KEY]);
+  const siteUsage = data[SITE_USAGE_KEY] || {};
+  const todayUsage = siteUsage[today] || { date: today, sites: {} };
+
+  todayUsage.sites[domain] = (todayUsage.sites[domain] || 0) + elapsedMinutes;
+  siteUsage[today] = todayUsage;
+
+  await chrome.storage.local.set({ [SITE_USAGE_KEY]: siteUsage });
+}
+
+async function flushTrackedSiteUsage() {
+  const data = await chrome.storage.local.get([SITE_USAGE_TRACKING_KEY]);
+  const state = data[SITE_USAGE_TRACKING_KEY];
+  if (!state?.domain || !state.startedAt) return;
+
+  const elapsedMs = Math.max(0, Date.now() - state.startedAt);
+  await addSiteUsage(state.domain, elapsedMs);
+  await chrome.storage.local.remove(SITE_USAGE_TRACKING_KEY);
+}
+
+async function setTrackedSiteState(domain, tabId, windowId) {
+  if (!domain) {
+    await chrome.storage.local.remove(SITE_USAGE_TRACKING_KEY);
+    return;
+  }
+
+  await chrome.storage.local.set({
+    [SITE_USAGE_TRACKING_KEY]: {
+      domain,
+      tabId: tabId ?? null,
+      windowId: windowId ?? null,
+      startedAt: Date.now(),
+    },
+  });
+}
+
+function queryActiveTab(queryInfo = {}) {
+  return new Promise((resolve) => {
+    chrome.tabs.query(
+      { active: true, lastFocusedWindow: true, ...queryInfo },
+      (tabs) => resolve(tabs?.[0] || null),
+    );
+  });
+}
+
+async function trackActiveTab(tab) {
+  const domain = normalizeTrackedDomain(tab?.url);
+  await flushTrackedSiteUsage();
+  await setTrackedSiteState(domain, tab?.id, tab?.windowId);
+  await maybeTrackAutoKill(tab);
+}
+
+async function refreshUsageTracking(queryInfo = {}) {
+  try {
+    const tab = await queryActiveTab(queryInfo);
+    await trackActiveTab(tab);
+  } catch (_) {
+    await flushTrackedSiteUsage().catch(() => {});
+    clearAutoKillTimer();
+  }
+}
+
+function bindSiteUsageTracking() {
+  chrome.tabs.onActivated.addListener((activeInfo) => {
+    refreshUsageTracking({ windowId: activeInfo.windowId });
+  });
+
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (!tab?.active) return;
+    if (!changeInfo.url && changeInfo.status !== "complete") return;
+    trackActiveTab(tab);
+  });
+
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    chrome.storage.local.get([SITE_USAGE_TRACKING_KEY], (data) => {
+      if (data[SITE_USAGE_TRACKING_KEY]?.tabId !== tabId) return;
+      refreshUsageTracking();
+    });
+  });
+
+  chrome.windows.onFocusChanged.addListener((windowId) => {
+    if (windowId === chrome.windows.WINDOW_ID_NONE) {
+      flushTrackedSiteUsage();
+      clearAutoKillTimer();
+      return;
+    }
+    refreshUsageTracking({ windowId });
+  });
+
+  chrome.windows.onRemoved.addListener((windowId) => {
+    if (windowId !== autoKillPopupWindowId) return;
+    autoKillPopupWindowId = null;
+    autoKillPopupOpen = false;
+    autoKillStartTime = Date.now();
+  });
+}
 
 // ================================
 // LICENSE KEY VALIDATION
@@ -168,7 +487,7 @@ async function validateLicenseKey() {
 // ================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "startBlock") {
-    const { lockEndTime, duration, intent, pinHash } = msg;
+    const { lockEndTime, duration, intent, pinHash, energyLevel } = msg;
 
     // ── SECURITY: Always validate Pro status live against Lemon Squeezy ──
     // NEVER trust isPro from chrome.storage.local — it's writable by anyone
@@ -178,11 +497,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const isProVerified = validation.isPro;
 
       chrome.storage.local.get(
-        ["customBlockedDomains", "todaySessionCount", "todayDate"],
+        [
+          "customBlockedDomains",
+          "todaySessionCount",
+          "todayDate",
+          "todayBlockedAttempts",
+        ],
         (data) => {
           const today = new Date().toISOString().split("T")[0];
           const isSameDay = data.todayDate === today;
           const todayCount = isSameDay ? data.todaySessionCount || 0 : 0;
+          const todayBlockedAttempts = isSameDay ? data.todayBlockedAttempts || 0 : 0;
 
           // Limit check uses server-verified Pro status — not local storage
           if (!isProVerified && todayCount >= FREE_SESSION_LIMIT) {
@@ -201,14 +526,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             lockEndTime,
             sessionDuration: duration,
             focusIntent: intent,
+            sessionEnergyLevel: energyLevel || null,
             sessionStartTime: Date.now(),
             blockedDomains: domains,
             lastFocusTime: Date.now(),
             todaySessionCount: todayCount + 1,
             todayDate: today,
+            todayBlockedAttempts,
             sessionPinHash: pinHash || null,
+            sessionBlockedAttempts: 0,
             isPro: isProVerified, // write back server-verified value — overwrites any tampering
           });
+          isSessionActive = true;
 
           enableBlocking(domains);
           chrome.alarms.create(UNLOCK_ALARM, { when: lockEndTime });
@@ -269,11 +598,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === "incrementBlocked") {
-    chrome.storage.local.get(["blockedAttempts"], (data) => {
-      chrome.storage.local.set({
-        blockedAttempts: (data.blockedAttempts || 0) + 1,
-      });
-    });
+    chrome.storage.local.get(
+      ["blockedAttempts", "sessionBlockedAttempts", "todayBlockedAttempts"],
+      (data) => {
+        chrome.storage.local.set({
+          blockedAttempts: (data.blockedAttempts || 0) + 1,
+          sessionBlockedAttempts: (data.sessionBlockedAttempts || 0) + 1,
+          todayBlockedAttempts: (data.todayBlockedAttempts || 0) + 1,
+        });
+      },
+    );
     sendResponse({ status: "ok" });
     return true;
   }
@@ -281,12 +615,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "saveCustomSites") {
     chrome.storage.local.set({ customBlockedDomains: msg.domains });
     saveCustomDomains(msg.domains).catch(() => {});
-    sendResponse({ status: "ok" });
-    return true;
-  }
-
-  if (msg.action === "completeSession") {
-    unlockSession();
     sendResponse({ status: "ok" });
     return true;
   }
@@ -391,6 +719,65 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (msg.action === "consumeAutoKillIntervention") {
+    chrome.storage.local.get(["autoKillIntervention"], (data) => {
+      sendResponse({ data: data.autoKillIntervention || null });
+    });
+    return true;
+  }
+
+  if (msg.action === "autoKillLockNow") {
+    const duration = 25;
+    const intent = `Auto Kill Switch: leave ${msg.domain || "the distraction"} and get back to work`;
+    const lockEndTime = Date.now() + duration * 60 * 1000;
+    autoKillPopupOpen = false;
+    autoKillPopupWindowId = null;
+    clearAutoKillTimer();
+
+    validateLicenseKey().then((validation) => {
+      const isProVerified = validation.isPro;
+      chrome.storage.local.get(["customBlockedDomains"], (data) => {
+        const domains =
+          isProVerified && data.customBlockedDomains?.length
+            ? data.customBlockedDomains
+            : DEFAULT_BLOCKED_DOMAINS;
+
+        chrome.storage.local.set({
+          isLocked: true,
+          lockEndTime,
+          sessionDuration: duration,
+          focusIntent: intent,
+          sessionEnergyLevel: null,
+          sessionStartTime: Date.now(),
+          blockedDomains: domains,
+          lastFocusTime: Date.now(),
+          sessionBlockedAttempts: 0,
+          isPro: isProVerified,
+        });
+        isSessionActive = true;
+
+        enableBlocking(domains);
+        chrome.alarms.create(UNLOCK_ALARM, { when: lockEndTime });
+        setupHardMode();
+        sendResponse({ ok: true });
+      });
+    });
+    return true;
+  }
+
+  if (msg.action === "autoKillContinue") {
+    autoKillPopupOpen = false;
+    autoKillPopupWindowId = null;
+    autoKillStartTime = Date.now();
+    chrome.storage.local.get(["ignoredWarnings"], (data) => {
+      chrome.storage.local.set({
+        ignoredWarnings: (data.ignoredWarnings || 0) + 1,
+      });
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
 });
 
 // ================================
@@ -486,11 +873,21 @@ function setNuclearUninstallURL() {
         ? Math.max(0, Math.ceil((data.lockEndTime - Date.now()) / 60000))
         : 0;
 
-      // In production replace with your hosted page
-      // For now, falls back gracefully if domain not live
-      const base = "https://deeplock.app/quit";
-      const url = `${base}?streak=${streak}&sessions=${sessions}&totalMins=${totalMins}&mins=${minsLeft}&elapsed=${elapsed}&duration=${duration}`;
-      chrome.runtime.setUninstallURL(url);
+      chrome.storage.local.set({
+        uninstallContext: {
+          streak,
+          sessions,
+          totalMins,
+          minsLeft,
+          elapsed,
+          duration,
+          capturedAt: Date.now(),
+        },
+      });
+
+      chrome.runtime.setUninstallURL("", () => {
+        void chrome.runtime.lastError;
+      });
     },
   );
 }
@@ -534,6 +931,7 @@ chrome.runtime.onInstalled.addListener(() => {
         longestStreak: 0,
         dailySessions: {},
         blockedAttempts: 0,
+        todayBlockedAttempts: 0,
         isPro: false,
         todaySessionCount: 0,
         todayDate: new Date().toISOString().split("T")[0],
@@ -543,6 +941,7 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 
   checkLockStatus();
+  refreshUsageTracking();
 });
 
 // ================================
@@ -552,6 +951,7 @@ chrome.runtime.onStartup.addListener(() => {
   checkLockStatus();
   validateLicenseKey();
   scheduleSmartAlarms();
+  refreshUsageTracking();
 
   // Re-register any pending scheduled sessions
   chrome.storage.local.get(["schedules"], (data) => {
@@ -592,6 +992,9 @@ chrome.runtime.onStartup.addListener(() => {
     }
   });
 });
+
+bindSiteUsageTracking();
+refreshUsageTracking();
 
 // ================================
 // ALARMS
@@ -938,6 +1341,7 @@ function checkLockStatus() {
     (data) => {
       if (!data.isLocked) return;
       if (data.lockEndTime > Date.now()) {
+        isSessionActive = true;
         chrome.alarms.create(UNLOCK_ALARM, { when: data.lockEndTime });
         // Always use DEFAULT_BLOCKED_DOMAINS if stored data is legacy string format
         const domains = data.blockedDomains;
@@ -951,7 +1355,9 @@ function checkLockStatus() {
             : domains || DEFAULT_BLOCKED_DOMAINS,
         );
       } else {
-        unlockSession();
+        console.log("Skipping stale unlock during startup/reload");
+        clearSessionRuntime();
+        resetStoredSessionState();
       }
     },
   );
@@ -1058,19 +1464,38 @@ function enableBlocking(domains) {
   });
 }
 
-function disableBlocking() {
+function disableBlocking(callback) {
   chrome.declarativeNetRequest.getDynamicRules((rules) => {
     chrome.declarativeNetRequest.updateDynamicRules(
       { removeRuleIds: rules.map((r) => r.id) },
-      () => console.log("[DeepLock] Blocking disabled"),
+      () => {
+        console.log("[DeepLock] Blocking disabled");
+        if (typeof callback === "function") callback();
+      },
     );
   });
 }
 
+function appendSessionLog(entry) {
+  chrome.storage.local.get([SESSION_LOG_KEY], (data) => {
+    const sessions = data[SESSION_LOG_KEY] || [];
+    sessions.push(entry);
+    chrome.storage.local.set({ [SESSION_LOG_KEY]: sessions.slice(-180) });
+  });
+}
+
 function unlockSession() {
+  if (!isSessionActive) {
+    console.log("No active session — ignoring unlock");
+    return;
+  }
+
+  isSessionActive = false;
   chrome.storage.local.get(
     [
       "sessionDuration",
+      "sessionStartTime",
+      "lockEndTime",
       "totalSessions",
       "totalFocusMinutes",
       "currentStreak",
@@ -1078,21 +1503,52 @@ function unlockSession() {
       "dailySessions",
       "lastSessionDate",
       "focusIntent",
+      "sessionEnergyLevel",
+      "sessionBlockedAttempts",
       "isPro",
       "sessionPinHash",
       "scheduledSessionId",
     ],
     (data) => {
       const duration = data.sessionDuration || 0;
+      const sessionStartTime = data.sessionStartTime || null;
+      const lockEndTime = data.lockEndTime || null;
       const intent = data.focusIntent || "";
+      const energyLevel = data.sessionEnergyLevel || null;
+      const sessionBlockedAttempts = data.sessionBlockedAttempts || 0;
       const isPro = !!data.isPro;
       const scheduledId = data.scheduledSessionId || null;
+      const now = Date.now();
+      const elapsedMs =
+        sessionStartTime && lockEndTime
+          ? Math.max(0, Math.min(now, lockEndTime) - sessionStartTime)
+          : duration * 60 * 1000;
+      const focusMinutes = Math.max(
+        0,
+        Math.min(duration, Math.round(elapsedMs / 60000)),
+      );
+
+      if (focusMinutes < 5) {
+        console.log("Skipping session complete modal — too short");
+        console.log("Session ended:", {
+          focusMinutes,
+          blockedAttempts: sessionBlockedAttempts,
+          streak: data.currentStreak || 0,
+          intent,
+          energyLevel,
+        });
+        clearSessionRuntime(() => {
+          resetStoredSessionState();
+        });
+        return;
+      }
+
       const totalSessions = (data.totalSessions || 0) + 1;
-      const totalFocusMins = (data.totalFocusMinutes || 0) + duration;
+      const totalFocusMins = (data.totalFocusMinutes || 0) + focusMinutes;
 
       const today = new Date().toISOString().split("T")[0];
       const dailySessions = data.dailySessions || {};
-      dailySessions[today] = (dailySessions[today] || 0) + duration;
+      dailySessions[today] = (dailySessions[today] || 0) + focusMinutes;
 
       // ── STREAK LOGIC ──────────────────────────────────
       let currentStreak = data.currentStreak || 0;
@@ -1110,17 +1566,18 @@ function unlockSession() {
 
       if (currentStreak > longestStreak) longestStreak = currentStreak;
 
-      disableBlocking();
-      chrome.alarms.clear(UNLOCK_ALARM);
-      chrome.runtime.setUninstallURL("https://deeplock.app/uninstall");
+      console.log("Session ended:", {
+        focusMinutes,
+        blockedAttempts: sessionBlockedAttempts,
+        streak: currentStreak,
+        intent,
+        energyLevel,
+      });
+
+      clearSessionRuntime(() => {
 
       // ── WRITE ALL STATS ───────────────────────────────
-      chrome.storage.local.set({
-        isLocked: false,
-        lockEndTime: null,
-        sessionStartTime: null,
-        sessionPinHash: null,
-        scheduledSessionId: null,
+      resetStoredSessionState({
         totalSessions,
         totalFocusMinutes: totalFocusMins,
         currentStreak,
@@ -1128,13 +1585,24 @@ function unlockSession() {
         dailySessions,
         lastSessionDate: today,
       });
+      });
+
+      appendSessionLog({
+        completedAt: Date.now(),
+        date: today,
+        hour: new Date().getHours(),
+        duration: focusMinutes,
+        energyLevel,
+        blockedAttempts: sessionBlockedAttempts,
+        intent,
+      });
 
       // ── COMPLETION NOTIFICATION ───────────────────────
       chrome.notifications.create(`sessionDone_${Date.now()}`, {
         type: "basic",
         iconUrl: "icon128.png",
         title: "Session Complete 🔥",
-        message: `${duration} min done. Streak: ${currentStreak} day${currentStreak !== 1 ? "s" : ""}. ${intent ? `"${intent.slice(0, 40)}"` : ""}`,
+        message: `${focusMinutes} min done. Streak: ${currentStreak} day${currentStreak !== 1 ? "s" : ""}. ${intent ? `"${intent.slice(0, 40)}"` : ""}`,
         priority: 2,
         buttons: [{ title: "View dashboard" }],
       });
@@ -1144,7 +1612,7 @@ function unlockSession() {
         // 1. Save session to history table
         saveSession({
           date: today,
-          duration,
+          duration: focusMinutes,
           intent,
           completed: true,
         }).catch(() => {});
@@ -1249,6 +1717,7 @@ function fireScheduledSession(alarmName) {
           scheduledSessionId: schedId, // track which schedule fired this
         },
         () => {
+          isSessionActive = true;
           enableBlocking(domains);
           chrome.alarms.create(UNLOCK_ALARM, { when: endTime });
 

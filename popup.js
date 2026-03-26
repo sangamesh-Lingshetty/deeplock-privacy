@@ -7,6 +7,8 @@ let selectedMinutes = null;
 let timerInterval = null;
 let isPro = false;
 let sessionDurationTotal = 0;
+let selectedEnergyLevel = null;
+const TEMP_BYPASS_PRO_FOR_TESTING = true;
 
 const FEEDBACK_URL =
   "https://docs.google.com/forms/d/e/1FAIpQLSdsXiTtGinkMXWV7zR0WhhoppxPLNXj4rPexSTY_2yYslNrUw/viewform";
@@ -33,6 +35,7 @@ const POPUP_POPULAR_SITES = [
   restoreSessionIfActive();
   loadSessionLimit();
   loadBlockedSiteCount(); // dynamic count
+  loadPopupFocusScore();
   bindEvents();
 })();
 
@@ -42,6 +45,11 @@ const POPUP_POPULAR_SITES = [
 // Local is just a loading fallback, not the truth
 // ================================
 function checkProStatus() {
+  if (TEMP_BYPASS_PRO_FOR_TESTING) {
+    isPro = true;
+    updateProUI();
+    return;
+  }
   // Default to NOT Pro — never trust local storage for UI gating
   // Local storage is writable by anyone with DevTools
   isPro = false;
@@ -110,6 +118,16 @@ function updateProUI() {
 // BIND ALL EVENTS
 // ================================
 function bindEvents() {
+  document.querySelectorAll(".energy-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document
+        .querySelectorAll(".energy-btn")
+        .forEach((node) => node.classList.remove("active"));
+      btn.classList.add("active");
+      selectedEnergyLevel = parseInt(btn.dataset.energy, 10);
+    });
+  });
+
   document.querySelectorAll(".time-btn").forEach((btn) => {
     btn.addEventListener("click", () => handleTimeSelect(btn));
   });
@@ -279,6 +297,7 @@ function startSession() {
       lockEndTime: endTime,
       duration: selectedMinutes,
       intent,
+      energyLevel: selectedEnergyLevel,
       pinHash: null,
     },
     (res) => {
@@ -695,7 +714,7 @@ function activateLicenseKey() {
 // DASHBOARD
 // ================================
 function openDashboard() {
-  if (!isPro) {
+  if (!isPro && !TEMP_BYPASS_PRO_FOR_TESTING) {
     showUpgradeModal("dashboard");
     return;
   }
@@ -757,6 +776,39 @@ function loadBlockedSiteCount() {
     } else {
       el.textContent = "Blocking 10 sites";
     }
+  });
+}
+
+function loadPopupFocusScore() {
+  chrome.storage.local.get(["siteUsage"], (data) => {
+    const today = new Date().toISOString().split("T")[0];
+    const sites = data.siteUsage?.[today]?.sites || {};
+    const total = Object.values(sites).reduce(
+      (sum, mins) => sum + (Number(mins) || 0),
+      0,
+    );
+    const distractingDomains = [
+      "youtube.com",
+      "twitter.com",
+      "instagram.com",
+      "reddit.com",
+      "facebook.com",
+      "tiktok.com",
+    ];
+    const distracting = Object.entries(sites).reduce((sum, [domain, mins]) => {
+      const isDistracting = distractingDomains.some(
+        (target) => domain === target || domain.endsWith(`.${target}`),
+      );
+      return sum + (isDistracting ? Number(mins) || 0 : 0);
+    }, 0);
+    const focusScore =
+      total > 0 ? Math.max(0, Math.min(100, Math.round(((total - distracting) / total) * 100))) : 100;
+
+    const scoreEl = document.getElementById("popupFocusScore");
+    if (!scoreEl) return;
+    scoreEl.textContent = `${focusScore}`;
+    scoreEl.style.color =
+      focusScore >= 70 ? "#8ef0ad" : focusScore >= 40 ? "#fbbf24" : "#f87171";
   });
 }
 
