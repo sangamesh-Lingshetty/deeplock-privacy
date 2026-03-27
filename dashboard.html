@@ -148,6 +148,134 @@
       <main class="main">
         <!-- OVERVIEW -->
         <div id="tab-overview" class="tab-content active">
+          <div class="overview-page">
+            <div class="overview-header">
+              <div>
+                <h1 class="overview-title">Your Focus Report</h1>
+                <p class="overview-sub" id="ovDateRange">Loading...</p>
+              </div>
+              <div class="overview-score-pill">
+                <span class="overview-score-num" id="ovWeekScore">—</span>
+                <span class="overview-score-tag">Week Score</span>
+              </div>
+            </div>
+
+            <div class="overview-stat-grid">
+              <div class="overview-stat-card">
+                <div class="overview-stat-delta up" id="ovHoursDelta">—</div>
+                <div class="overview-stat-value accent" id="ovTotalHours">—</div>
+                <div class="overview-stat-label">Total Hours Focused</div>
+              </div>
+              <div class="overview-stat-card green">
+                <div class="overview-stat-delta up" id="ovSessionsDelta">—</div>
+                <div class="overview-stat-value green" id="ovTotalSessions">—</div>
+                <div class="overview-stat-label">Sessions Completed</div>
+              </div>
+              <div class="overview-stat-card">
+                <div class="overview-stat-delta" id="ovBlockedDelta">—</div>
+                <div class="overview-stat-value muted" id="ovBlockedAttempts">—</div>
+                <div class="overview-stat-label">Distractions Blocked</div>
+              </div>
+              <div class="overview-stat-card fire">
+                <div class="overview-stat-delta" id="ovStreakDelta">Stay live</div>
+                <div class="overview-stat-value fire" id="ovCurrentStreak">—</div>
+                <div class="overview-stat-label">Current Streak</div>
+              </div>
+            </div>
+
+            <div class="overview-chart-card">
+              <div class="overview-chart-header">
+                <div class="overview-chart-title">Focus Activity</div>
+                <div class="overview-chart-actions">
+                  <div class="overview-chart-legend">
+                    <div class="overview-legend-item">
+                      <span class="overview-legend-dot"></span>
+                      <span>Focus mins</span>
+                    </div>
+                    <div class="overview-legend-item">
+                      <span class="overview-legend-dot fire"></span>
+                      <span>Distractions</span>
+                    </div>
+                  </div>
+                  <div class="overview-range-tabs">
+                    <button class="overview-range-tab active" data-range="7d" type="button">7D</button>
+                    <button class="overview-range-tab" data-range="1m" type="button">1M</button>
+                    <button class="overview-range-tab" data-range="6m" type="button">6M</button>
+                    <button class="overview-range-tab" data-range="1y" type="button">1Y</button>
+                  </div>
+                </div>
+              </div>
+              <div class="overview-chart-wrap">
+                <canvas id="overviewFocusChart"></canvas>
+              </div>
+            </div>
+
+            <div class="overview-bottom-grid">
+              <div class="overview-today-card">
+                <div class="overview-card-title">Today's Summary</div>
+                <div class="overview-today-nums">
+                  <div class="overview-today-num-item">
+                    <div class="overview-today-big" id="ovTodayMins">0</div>
+                    <div class="overview-today-unit">Min Focused</div>
+                  </div>
+                  <div class="overview-today-num-item">
+                    <div class="overview-today-big" id="ovTodaySessions">0</div>
+                    <div class="overview-today-unit">Sessions</div>
+                  </div>
+                  <div class="overview-today-num-item">
+                    <div class="overview-today-big fire" id="ovTodayUrges">0</div>
+                    <div class="overview-today-unit">Urges Blocked</div>
+                  </div>
+                </div>
+                <div class="overview-goal-bar-wrap">
+                  <div class="overview-goal-bar-label">
+                    <span>Daily Goal</span>
+                    <span id="ovTodayGoalLabel">0 / 120 min</span>
+                  </div>
+                  <div class="overview-goal-bar-track">
+                    <div class="overview-goal-bar-fill" id="ovGoalBar"></div>
+                  </div>
+                </div>
+                <div class="overview-session-chips" id="ovSessionChips"></div>
+              </div>
+
+              <div class="overview-records-card">
+                <div class="overview-card-title">All-Time Records</div>
+                <div class="overview-record-row">
+                  <span class="overview-record-label">Longest Streak</span>
+                  <span class="overview-record-val" id="ovLongestStreak">—</span>
+                </div>
+                <div class="overview-record-row">
+                  <span class="overview-record-label">Best Day</span>
+                  <span class="overview-record-val" id="ovBestDay">—</span>
+                </div>
+                <div class="overview-record-row">
+                  <span class="overview-record-label">Avg Session</span>
+                  <span class="overview-record-val" id="ovAvgSession">—</span>
+                </div>
+                <div class="overview-record-row">
+                  <span class="overview-record-label">Total Hours (all time)</span>
+                  <span class="overview-record-val" id="ovTotalHoursAll">—</span>
+                </div>
+                <div class="overview-record-row">
+                  <span class="overview-record-label">Total Sessions</span>
+                  <span class="overview-record-val" id="ovTotalSessionsAll">—</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="overview-quote-card">
+              <div class="overview-quote-text" id="ovMotivationQuote">Loading...</div>
+              <button class="overview-quote-refresh" id="ovQuoteRefresh" title="New quote" type="button">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M23 4v6h-6"></path>
+                  <path d="M1 20v-6h6"></path>
+                  <path d="M3.51 9a9 9 0 0114.85-3.36L23 10"></path>
+                  <path d="M1 14l4.64 4.36A9 9 0 0020.49 15"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
           <div class="page-header">
             <div>
               <h1 class="page-title">Your Focus Report</h1>
@@ -334,41 +462,91 @@
           </div>
 
           <div class="card" style="margin-bottom: 16px">
-            <div class="sites-section-header">
-              <div>
-                <div class="sites-section-title">Smart Lock (Auto Kill)</div>
-                <div class="smartlock-copy">
-                  Automatically interrupts you when you spend too long on selected
-                  sites.
+            <div class="smartlock-shell">
+              <div class="smartlock-hero">
+                <div>
+                  <div class="sites-section-title">Smart Lock (Auto Kill)</div>
+                  <div class="smartlock-copy">
+                    Automatically interrupts you when you spend too long on selected
+                    sites.
+                  </div>
+                </div>
+                <label class="smartlock-toggle">
+                  <input type="checkbox" id="autoKillEnabled" />
+                  <span class="smartlock-slider"></span>
+                </label>
+              </div>
+
+              <div class="smartlock-metrics">
+                <div class="smartlock-metric-card">
+                  <div class="smartlock-metric-label">Status</div>
+                  <div class="smartlock-metric-value" id="smartLockSummaryState">
+                    Disabled
+                  </div>
+                </div>
+                <div class="smartlock-metric-card">
+                  <div class="smartlock-metric-label">Sites Armed</div>
+                  <div class="smartlock-metric-value" id="smartLockArmedValue">0</div>
+                </div>
+                <div class="smartlock-metric-card">
+                  <div class="smartlock-metric-label">Default Trigger</div>
+                  <div class="smartlock-metric-value" id="smartLockTriggerValue">10 min</div>
                 </div>
               </div>
-              <label class="smartlock-toggle">
-                <input type="checkbox" id="autoKillEnabled" />
-                <span class="smartlock-slider"></span>
-              </label>
-            </div>
-            <div class="smartlock-row">
-              <label class="smartlock-input-label" for="autoKillMinutes">
-                Default trigger
-              </label>
-              <div class="smartlock-input-wrap">
-                <input
-                  id="autoKillMinutes"
-                  class="smartlock-input"
-                  type="number"
-                  min="1"
-                  max="180"
-                  value="10"
-                />
-                <span class="smartlock-input-unit">min</span>
+
+              <div class="smartlock-signal-bar">
+                <div class="smartlock-signal-chip" id="smartLockSignalChip">Not watching yet</div>
+                <div class="smartlock-signal-copy" id="smartLockSignalCopy">
+                  Pick the sites that usually pull you away. DeepLock will interrupt the loop before it turns into a lost hour.
+                </div>
               </div>
-            </div>
-            <div class="smartlock-summary-row">
-              <div class="smartlock-summary-chip" id="smartLockSummaryState">
-                Disabled
+
+              <div class="smartlock-row">
+                <label class="smartlock-input-label" for="autoKillMinutes">
+                  Default trigger
+                </label>
+                <div class="smartlock-input-wrap">
+                  <input
+                    id="autoKillMinutes"
+                    class="smartlock-input"
+                    type="number"
+                    min="1"
+                    max="180"
+                    value="10"
+                  />
+                  <span class="smartlock-input-unit">min</span>
+                </div>
               </div>
-              <div class="smartlock-summary-chip" id="smartLockSummaryCount">
-                0 sites armed
+
+              <div class="smartlock-status-note" id="smartLockStatusNote">
+                Smart Lock is off. Turn it on to watch your selected distraction sites.
+              </div>
+
+              <div class="smartlock-summary-row">
+                <div class="smartlock-summary-chip" id="smartLockSummaryCount">
+                  0 sites armed
+                </div>
+                <div class="smartlock-summary-chip" id="smartLockSummaryBehavior">
+                  Intervention window ready
+                </div>
+                <div class="smartlock-summary-chip" id="smartLockSummaryEffect">
+                  Works on active distracting tabs
+                </div>
+              </div>
+
+              <div class="smartlock-flow">
+                <div class="smartlock-flow-step">
+                  <div class="smartlock-flow-kicker">Watch</div>
+                  <div class="smartlock-flow-text">Tracks the active site you stay on.</div>
+                </div>
+                <div class="smartlock-flow-step">
+                  <div class="smartlock-flow-kicker">Interrupt</div>
+                  <div class="smartlock-flow-text">Opens a friction popup when the timer is crossed.</div>
+                </div>
+                <div class="smartlock-flow-step">
+                  <div class="smartlock-flow-kicker">Recover</div>
+                  <div class="smartlock-flow-text">Pushes you back into a lock session or lets you continue consciously.</div>
+                </div>
               </div>
             </div>
             <div class="smartlock-sites-head">
@@ -971,24 +1149,7 @@
                 Last 7 days of tracked browsing
               </div>
               <div class="insights-chart-wrap">
-                <svg
-                  class="insights-chart-svg"
-                  id="insightsTrendChart"
-                  viewBox="0 0 640 220"
-                  preserveAspectRatio="none"
-                >
-                  <defs>
-                    <linearGradient id="insightsAreaGradient" x1="0" x2="0" y1="0" y2="1">
-                      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.28"></stop>
-                      <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.02"></stop>
-                    </linearGradient>
-                  </defs>
-                  <g id="insightsChartGrid"></g>
-                  <path id="insightsChartArea" class="insights-chart-area"></path>
-                  <path id="insightsChartLine" class="insights-chart-line"></path>
-                  <g id="insightsChartDots"></g>
-                </svg>
-                <div class="insights-chart-labels" id="insightsChartLabels"></div>
+                <canvas class="insights-chart-canvas" id="insightsTrendChart"></canvas>
               </div>
             </div>
 
@@ -1117,36 +1278,10 @@
                 </div>
 
                 <div class="insights-life-visual" id="insightsLifeVisual">
-                  <div class="insights-life-ring">
-                    <svg
-                      class="insights-life-ring-svg"
-                      viewBox="0 0 160 160"
-                      aria-hidden="true"
-                    >
-                      <defs>
-                        <linearGradient id="insightsLifeRingGradient" x1="0" x2="1" y1="0" y2="1">
-                          <stop offset="0%" stop-color="#fb7185"></stop>
-                          <stop offset="100%" stop-color="#ef4444"></stop>
-                        </linearGradient>
-                      </defs>
-                      <circle
-                        class="insights-life-ring-track"
-                        cx="80"
-                        cy="80"
-                        r="62"
-                      ></circle>
-                      <circle
-                        class="insights-life-ring-progress"
-                        id="insightsLifeRingProgress"
-                        cx="80"
-                        cy="80"
-                        r="62"
-                      ></circle>
-                    </svg>
-                    <div class="insights-life-ring-center">
-                      <div class="insights-life-ring-number" id="insightsLifeDaysLost">
-                        0.0
-                      </div>
+                  <div class="insights-life-mini-chart-wrap">
+                    <canvas id="insightsLifeChart" class="insights-life-chart-canvas"></canvas>
+                    <div class="insights-life-mini-center">
+                      <div class="insights-life-ring-number" id="insightsLifeDaysLost">0.0</div>
                       <div class="insights-life-ring-label">days lost</div>
                     </div>
                   </div>
@@ -1161,6 +1296,7 @@
       </main>
     </div>
     <script src="supabase.js"></script>
+    <script src="chart.min.js"></script>
     <script src="dashboard.js"></script>
   </body>
 </html>

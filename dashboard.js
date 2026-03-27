@@ -119,6 +119,14 @@ const QUOTES = [
   "The difference between you and your competition is this: you show up.",
 ];
 
+const OVERVIEW_DAILY_GOAL_MINUTES = 120;
+let currentOverviewRange = "7d";
+let overviewChart = null;
+let insightsTrendChart = null;
+let insightsLifeChart = null;
+let overviewSnapshot = null;
+let currentOverviewQuoteIndex = 0;
+
 const DEFAULT_SITES = [
   { name: "Instagram", filter: "||instagram.com^" },
   { name: "X / Twitter", filter: "||x.com^" },
@@ -278,10 +286,7 @@ function initDashboard() {
   if (!window.__deepLockAllowed) return; // safety net
   initTheme();
   setDateRange();
-  setText(
-    "motivationQuote",
-    `"${QUOTES[Math.floor(Math.random() * QUOTES.length)]}"`,
-  );
+  initOverviewUI();
   bindTabNav();
   checkActiveSession();
   loadAllData();
@@ -295,6 +300,39 @@ function initDashboard() {
   loadInsightsData();
   initSubscriptionManagement();
   schedTabInited = true;
+}
+
+function initOverviewUI() {
+  currentOverviewQuoteIndex = Math.floor(Math.random() * QUOTES.length);
+  applyOverviewQuote();
+
+  document.querySelectorAll(".overview-range-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document
+        .querySelectorAll(".overview-range-tab")
+        .forEach((node) => node.classList.remove("active"));
+      btn.classList.add("active");
+      currentOverviewRange = btn.dataset.range || "7d";
+      if (overviewSnapshot) {
+        setOverviewDateRange(currentOverviewRange);
+        renderOverviewChart(currentOverviewRange, overviewSnapshot);
+      }
+    });
+  });
+
+  const quoteBtn = el("ovQuoteRefresh");
+  if (quoteBtn) {
+    quoteBtn.addEventListener("click", () => {
+      currentOverviewQuoteIndex = (currentOverviewQuoteIndex + 1) % QUOTES.length;
+      applyOverviewQuote();
+    });
+  }
+}
+
+function applyOverviewQuote() {
+  const quote = `"${QUOTES[currentOverviewQuoteIndex]}"`;
+  setText("ovMotivationQuote", quote);
+  setText("motivationQuote", quote);
 }
 
 // ================================
@@ -326,6 +364,8 @@ function loadAllData() {
       "sbSignedIn",
       "todaySessionCount",
       "todayDate",
+      "todayBlockedAttempts",
+      "focusSessionLog",
     ],
     async (data) => {
       const sessions = data.totalSessions || 0;
@@ -336,11 +376,16 @@ function loadAllData() {
       const blocked = data.blockedAttempts || 0;
       const totalHours = (totalMins / 60).toFixed(1);
       const today = new Date().toISOString().split("T")[0];
+      const focusSessionLog = data.focusSessionLog || [];
+      const sessionDayMap = buildSessionDayMap(focusSessionLog);
 
       // Today's count from both sources
       const isSameDay = data.todayDate === today;
       const todayCount = isSameDay ? data.todaySessionCount || 0 : 0;
       const todayMins = daily[today] || 0;
+      const todayUrges = isSameDay
+        ? data.todayBlockedAttempts || 0
+        : sessionDayMap[today]?.blockedAttempts || 0;
 
       setText("totalHours", `${totalHours}h`);
       setText("totalSessions", sessions);
@@ -359,6 +404,21 @@ function loadAllData() {
 
       const weekMins = getWeekMinutes(daily);
       setText("weekScore", Math.min(100, Math.round((weekMins / 840) * 100)));
+      populateOverview({
+        sessions,
+        totalMins,
+        totalHours,
+        streak,
+        longest,
+        daily,
+        blocked,
+        today,
+        todayCount,
+        todayMins,
+        todayUrges,
+        focusSessionLog,
+        sessionDayMap,
+      });
 
       setText("todayMins", todayMins);
       setText("todaySessions", todayCount);
@@ -633,20 +693,125 @@ function loadCustomSites() {
   );
 }
 
+function setDateRange() {
+  setOverviewDateRange(currentOverviewRange);
+}
+
+function setOverviewDateRange(rangeKey) {
+  const now = new Date();
+  let text = "";
+
+  if (rangeKey === "7d") {
+    const start = new Date(now);
+    start.setDate(start.getDate() - 7);
+    text = formatDateRangeLabel(start, now, true);
+  } else if (rangeKey === "1m") {
+    const start = new Date(now);
+    start.setDate(start.getDate() - 29);
+    text = formatDateRangeLabel(start, now, true);
+  } else if (rangeKey === "6m") {
+    const start = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+    text = `${start.toLocaleDateString("en-US", { month: "short", year: "numeric" })} – ${now.toLocaleDateString("en-US", { month: "short", year: "numeric" })}`;
+  } else {
+    const start = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    text = `${start.toLocaleDateString("en-US", { month: "short", year: "numeric" })} – ${now.toLocaleDateString("en-US", { month: "short", year: "numeric" })}`;
+  }
+
+  setText("dateRange", text);
+  setText("ovDateRange", text);
+}
+
+function formatDateRangeLabel(start, end, includeYear) {
+  const startText = start.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  const endText = end.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(includeYear ? { year: "numeric" } : {}),
+  });
+  return `${startText} – ${endText}`;
+}
+
 function renderSmartLockSites(sites, masterEnabled) {
   const list = el("smartLockSitesList");
   const state = el("smartLockSummaryState");
   const count = el("smartLockSummaryCount");
+  const armedValue = el("smartLockArmedValue");
+  const triggerValue = el("smartLockTriggerValue");
+  const statusNote = el("smartLockStatusNote");
+  const signalChip = el("smartLockSignalChip");
+  const signalCopy = el("smartLockSignalCopy");
+  const summaryBehavior = el("smartLockSummaryBehavior");
+  const summaryEffect = el("smartLockSummaryEffect");
   if (!list) return;
 
   const armedCount = sites.filter((site) => site.enabled).length;
+  const visibleArmedCount = masterEnabled ? armedCount : 0;
   if (state) state.textContent = masterEnabled ? "Enabled" : "Disabled";
-  if (count) count.textContent = `${armedCount} site${armedCount === 1 ? "" : "s"} armed`;
+  if (count) count.textContent = `${visibleArmedCount} site${visibleArmedCount === 1 ? "" : "s"} armed`;
+  if (armedValue) armedValue.textContent = String(visibleArmedCount);
+  if (triggerValue) {
+    const activeMinutes =
+      sites.find((site) => site.enabled)?.minutes || sites[0]?.minutes || 10;
+    triggerValue.textContent = `${activeMinutes} min`;
+  }
+  if (signalChip) {
+    signalChip.classList.remove("is-live", "is-warn");
+    if (!masterEnabled) {
+      signalChip.textContent = "Not watching yet";
+    } else if (armedCount === 0) {
+      signalChip.textContent = "Needs armed sites";
+      signalChip.classList.add("is-warn");
+    } else {
+      signalChip.textContent = "Watching for drift";
+      signalChip.classList.add("is-live");
+    }
+  }
+  if (signalCopy) {
+    if (!masterEnabled) {
+      signalCopy.textContent =
+        "Pick the sites that usually pull you away. DeepLock will interrupt the loop before it turns into a lost hour.";
+    } else if (armedCount === 0) {
+      signalCopy.textContent =
+        "Smart Lock is enabled, but it needs at least one armed site before it can intervene.";
+    } else {
+      const firstArmed = sites.find((site) => site.enabled);
+      signalCopy.textContent = `DeepLock is ready to interrupt after ${firstArmed?.minutes || 10} min on an armed site.`;
+    }
+  }
+  if (statusNote) {
+    if (!masterEnabled) {
+      statusNote.textContent =
+        "Smart Lock is off. Turn it on to watch your selected distraction sites.";
+    } else if (armedCount === 0) {
+      statusNote.textContent =
+        "Smart Lock is on, but no sites are armed yet. Enable at least one site below.";
+    } else {
+      statusNote.textContent =
+        "Smart Lock is live. If you linger too long on an armed site, DeepLock will interrupt you.";
+    }
+  }
+  if (summaryBehavior) {
+    summaryBehavior.textContent = masterEnabled
+      ? armedCount > 0
+        ? "Opens intervention popup"
+        : "Arm a site to activate"
+      : "Intervention window ready";
+  }
+  if (summaryEffect) {
+    summaryEffect.textContent = masterEnabled
+      ? visibleArmedCount > 0
+        ? `Applies to ${visibleArmedCount} active site${visibleArmedCount === 1 ? "" : "s"}`
+        : "Waiting for your site selection"
+      : "Works on active distracting tabs";
+  }
 
   list.innerHTML = sites
     .map(
       (site) => `
-        <div class="smartlock-site-row ${masterEnabled ? "" : "is-disabled"}" data-domain="${site.domain}">
+        <div class="smartlock-site-row ${masterEnabled ? "" : "is-disabled"} ${site.enabled ? "is-armed" : ""}" data-domain="${site.domain}">
           <div class="smartlock-site-main">
             <img
               class="smartlock-site-favicon"
@@ -656,6 +821,11 @@ function renderSmartLockSites(sites, masterEnabled) {
             <div class="smartlock-site-copy">
               <div class="smartlock-site-name">${site.name}</div>
               <div class="smartlock-site-domain">${site.domain}</div>
+              <div class="smartlock-site-hint">${
+                site.enabled
+                  ? `Interrupt after ${site.minutes} min on ${site.name}.`
+                  : "Off for now."
+              }</div>
             </div>
           </div>
           <label class="smartlock-mini-toggle">
@@ -684,7 +854,7 @@ function saveSmartLockSettings(partial = {}) {
   chrome.storage.local.get(
     ["customBlockedDomains", "autoKillSites", "autoKillMinutes", "autoKillEnabled"],
     (data) => {
-      const nextMinutes =
+      let nextMinutes =
         partial.autoKillMinutes !== undefined
           ? partial.autoKillMinutes
           : Number(data.autoKillMinutes) || 10;
@@ -707,6 +877,17 @@ function saveSmartLockSettings(partial = {}) {
 
       if (partial.autoKillSites) {
         nextSiteMap = { ...nextSiteMap, ...partial.autoKillSites };
+        const updatedSite = Object.values(partial.autoKillSites)[0];
+        if (
+          partial.autoKillMinutes === undefined &&
+          updatedSite &&
+          typeof updatedSite.minutes === "number" &&
+          Number.isFinite(updatedSite.minutes)
+        ) {
+          nextMinutes = Math.max(1, Math.min(180, updatedSite.minutes));
+          const minutesInput = el("autoKillMinutes");
+          if (minutesInput) minutesInput.value = String(nextMinutes);
+        }
       }
 
       chrome.storage.local.set(
@@ -724,6 +905,9 @@ function saveSmartLockSettings(partial = {}) {
             ),
             nextMaster,
           );
+          chrome.runtime.sendMessage({ action: "refreshAutoKillTracking" }, () => {
+            void chrome.runtime.lastError;
+          });
         },
       );
     },
@@ -1165,6 +1349,339 @@ function getBestDay(daily) {
   return v.length ? Math.max(0, ...v) : 0;
 }
 
+function buildSessionDayMap(log) {
+  return (log || []).reduce((acc, entry) => {
+    const key = entry.date || new Date(entry.completedAt || Date.now()).toISOString().split("T")[0];
+    if (!acc[key]) {
+      acc[key] = { sessions: 0, blockedAttempts: 0, totalMinutes: 0, items: [] };
+    }
+    acc[key].sessions += 1;
+    acc[key].blockedAttempts += entry.blockedAttempts || 0;
+    acc[key].totalMinutes += entry.duration || 0;
+    acc[key].items.push(entry);
+    return acc;
+  }, {});
+}
+
+function populateOverview(data) {
+  overviewSnapshot = data;
+
+  const weekMinutes = getWeekMinutes(data.daily);
+  const weekScore = Math.min(100, Math.round((weekMinutes / (OVERVIEW_DAILY_GOAL_MINUTES * 7)) * 100));
+  const delta = getOverviewDeltaSummary(data.daily, data.sessionDayMap);
+  const bestDay = getBestDayDetails(data.daily);
+  const averageSession = data.sessions > 0 ? Math.round(data.totalMins / data.sessions) : 0;
+
+  setText("ovTotalHours", `${data.totalHours}h`);
+  setText("ovTotalSessions", data.sessions);
+  setText("ovBlockedAttempts", data.blocked);
+  setText("ovCurrentStreak", `${data.streak}🔥`);
+  setText("ovWeekScore", weekScore);
+  setText("ovTodayMins", data.todayMins);
+  setText("ovTodaySessions", data.todayCount);
+  setText("ovTodayUrges", data.todayUrges);
+  setText("ovLongestStreak", `${data.longest} days`);
+  setText(
+    "ovBestDay",
+    bestDay
+      ? `${formatMinutes(bestDay.minutes)} · ${formatDateForRecord(bestDay.dateKey)}`
+      : "—",
+  );
+  setText("ovAvgSession", averageSession > 0 ? `${averageSession} min` : "—");
+  setText("ovTotalHoursAll", `${data.totalHours}h`);
+  setText("ovTotalSessionsAll", data.sessions);
+  setText("ovTodayGoalLabel", `${data.todayMins} / ${OVERVIEW_DAILY_GOAL_MINUTES} min`);
+  setText("hoursDelta", delta.hours);
+  setText("sessionsDelta", delta.sessions);
+  setText("blockedDelta", delta.blocked);
+  setText("streakDelta", data.streak > 0 ? "Stay live" : "Start today");
+  setText("ovHoursDelta", delta.hours);
+  setText("ovSessionsDelta", delta.sessions);
+  setText("ovBlockedDelta", delta.blocked);
+  setText("ovStreakDelta", data.streak > 0 ? "Stay live" : "Start today");
+
+  renderOverviewSessionChips(data.focusSessionLog, data.today);
+  renderOverviewGoalBar(data.todayMins);
+  setOverviewDateRange(currentOverviewRange);
+  renderOverviewChart(currentOverviewRange, data);
+}
+
+function renderOverviewGoalBar(todayMins) {
+  const goalBar = el("ovGoalBar");
+  if (!goalBar) return;
+  const progress = Math.min(100, (todayMins / OVERVIEW_DAILY_GOAL_MINUTES) * 100);
+  goalBar.style.width = `${progress}%`;
+  goalBar.classList.toggle("done", todayMins >= OVERVIEW_DAILY_GOAL_MINUTES);
+}
+
+function renderOverviewSessionChips(log, todayKey) {
+  const container = el("ovSessionChips");
+  if (!container) return;
+  const entries = (log || [])
+    .filter((entry) => (entry.date || "").startsWith(todayKey))
+    .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0))
+    .slice(0, 3);
+
+  if (!entries.length) {
+    container.innerHTML = '<div class="overview-session-empty">No completed sessions yet today.</div>';
+    return;
+  }
+
+  container.innerHTML = entries
+    .map((entry) => {
+      const intent = (entry.intent || "Focus").trim() || "Focus";
+      return `<div class="overview-session-chip"><span class="overview-chip-dot"></span>${escapeHtml(intent)} · ${entry.duration || 0}m</div>`;
+    })
+    .join("");
+}
+
+function getOverviewDeltaSummary(daily, sessionDayMap) {
+  const currentDays = getRecentDateKeys(7, 0);
+  const previousDays = getRecentDateKeys(7, 7);
+
+  const currentFocus = currentDays.reduce((sum, key) => sum + (daily[key] || 0), 0);
+  const previousFocus = previousDays.reduce((sum, key) => sum + (daily[key] || 0), 0);
+  const currentSessions = currentDays.reduce((sum, key) => sum + (sessionDayMap[key]?.sessions || 0), 0);
+  const previousSessions = previousDays.reduce((sum, key) => sum + (sessionDayMap[key]?.sessions || 0), 0);
+  const currentBlocked = currentDays.reduce((sum, key) => sum + (sessionDayMap[key]?.blockedAttempts || 0), 0);
+  const previousBlocked = previousDays.reduce((sum, key) => sum + (sessionDayMap[key]?.blockedAttempts || 0), 0);
+
+  return {
+    hours: formatDeltaCompact((currentFocus - previousFocus) / 60, "h"),
+    sessions: formatDeltaCompact(currentSessions - previousSessions, ""),
+    blocked: formatDeltaCompact(currentBlocked - previousBlocked, ""),
+  };
+}
+
+function getRecentDateKeys(days, offsetDays = 0) {
+  const keys = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const date = new Date();
+    date.setDate(date.getDate() - (i + offsetDays));
+    keys.push(date.toISOString().split("T")[0]);
+  }
+  return keys;
+}
+
+function formatDeltaCompact(value, suffix) {
+  if (!value) return "—";
+  const rounded = suffix === "h" ? Math.round(value * 10) / 10 : Math.round(value);
+  if (!rounded) return "—";
+  const sign = rounded > 0 ? "+" : "";
+  return `${sign}${rounded}${suffix}`;
+}
+
+function getBestDayDetails(daily) {
+  let best = null;
+  Object.entries(daily || {}).forEach(([dateKey, minutes]) => {
+    if (!best || minutes > best.minutes) {
+      best = { dateKey, minutes };
+    }
+  });
+  return best && best.minutes > 0 ? best : null;
+}
+
+function formatDateForRecord(dateKey) {
+  const date = new Date(`${dateKey}T00:00:00`);
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function renderOverviewChart(rangeKey, data) {
+  if (typeof Chart === "undefined") return;
+  const canvas = el("overviewFocusChart");
+  if (!canvas) return;
+
+  const ctx = canvas.getContext("2d");
+  const rangeData = buildOverviewRangeData(rangeKey, data.daily, data.sessionDayMap);
+  const isLine = rangeData.type === "line";
+
+  if (overviewChart) overviewChart.destroy();
+
+  const focusFill = ctx.createLinearGradient(0, 0, 0, 220);
+  focusFill.addColorStop(0, "rgba(59,130,246,0.28)");
+  focusFill.addColorStop(1, "rgba(59,130,246,0.02)");
+
+  const blockedFill = ctx.createLinearGradient(0, 0, 0, 220);
+  blockedFill.addColorStop(0, "rgba(249,115,22,0.24)");
+  blockedFill.addColorStop(1, "rgba(249,115,22,0.02)");
+
+  overviewChart = new Chart(ctx, {
+    type: isLine ? "line" : "bar",
+    data: {
+      labels: rangeData.labels,
+      datasets: [
+        {
+          label: "Focus (min)",
+          data: rangeData.focus,
+          yAxisID: "yFocus",
+          borderColor: "#60a5fa",
+          backgroundColor: isLine ? focusFill : "rgba(59,130,246,0.75)",
+          borderWidth: isLine ? 2 : 0,
+          borderRadius: isLine ? 0 : 5,
+          borderSkipped: "bottom",
+          fill: isLine,
+          tension: 0.38,
+          pointRadius: isLine ? 3 : 0,
+          pointBackgroundColor: "#93c5fd",
+          pointBorderWidth: 0,
+          order: 1,
+        },
+        {
+          label: "Distractions",
+          data: rangeData.blocked,
+          yAxisID: "yBlocked",
+          type: isLine ? "line" : "bar",
+          borderColor: "#f97316",
+          backgroundColor: isLine ? blockedFill : "rgba(249,115,22,0.48)",
+          borderWidth: isLine ? 1.5 : 0,
+          borderRadius: isLine ? 0 : 5,
+          borderSkipped: "bottom",
+          borderDash: isLine ? [4, 4] : [],
+          fill: isLine,
+          tension: 0.38,
+          pointRadius: isLine ? 2 : 0,
+          pointBackgroundColor: "#f97316",
+          pointBorderWidth: 0,
+          order: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 600, easing: "easeInOutQuart" },
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "#222226",
+          borderColor: "rgba(255,255,255,0.12)",
+          borderWidth: 1,
+          padding: { x: 14, y: 10 },
+          titleColor: "#f0eff4",
+          bodyColor: "#888899",
+          titleFont: { family: "DM Sans", size: 12, weight: "500" },
+          bodyFont: { family: "DM Sans", size: 12 },
+          callbacks: {
+            label(context) {
+              if (context.dataset.label === "Focus (min)") {
+                return `  Focus: ${formatMinutes(context.raw || 0)}`;
+              }
+              return `  Blocked: ${context.raw || 0}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: { color: "rgba(255,255,255,0.04)", drawBorder: false },
+          ticks: {
+            color: "#55555f",
+            font: { family: "DM Sans", size: 11 },
+            maxRotation: 0,
+            maxTicksLimit:
+              rangeKey === "1y" ? 12 : rangeKey === "6m" ? 6 : rangeKey === "1m" ? 10 : 7,
+          },
+          border: { display: false },
+        },
+        yFocus: {
+          position: "left",
+          grid: { color: "rgba(255,255,255,0.04)", drawBorder: false },
+          ticks: {
+            color: "#55555f",
+            font: { family: "DM Sans", size: 11 },
+            callback(value) {
+              return Number(value) >= 60 ? `${(Number(value) / 60).toFixed(1)}h` : `${value}m`;
+            },
+          },
+          border: { display: false },
+        },
+        yBlocked: {
+          position: "right",
+          grid: { display: false },
+          ticks: {
+            color: "#55555f",
+            font: { family: "DM Sans", size: 11 },
+          },
+          border: { display: false },
+        },
+      },
+    },
+  });
+}
+
+function buildOverviewRangeData(rangeKey, daily, sessionDayMap) {
+  if (rangeKey === "7d" || rangeKey === "1m") {
+    const days = rangeKey === "7d" ? 7 : 30;
+    const labels = [];
+    const focus = [];
+    const blocked = [];
+
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const key = date.toISOString().split("T")[0];
+      labels.push(
+        rangeKey === "7d" && i === 0
+          ? "Today"
+          : date.toLocaleDateString("en-US", rangeKey === "7d"
+              ? { weekday: "short" }
+              : { month: "numeric", day: "numeric" }),
+      );
+      focus.push(daily[key] || 0);
+      blocked.push(sessionDayMap[key]?.blockedAttempts || 0);
+    }
+
+    return { labels, focus, blocked, type: "bar" };
+  }
+
+  const months = rangeKey === "6m" ? 6 : 12;
+  const monthBuckets = [];
+
+  for (let i = months - 1; i >= 0; i--) {
+    const date = new Date();
+    date.setMonth(date.getMonth() - i, 1);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    monthBuckets.push({
+      key,
+      label: date.toLocaleDateString("en-US", { month: "short" }),
+      focus: 0,
+      blocked: 0,
+    });
+  }
+
+  Object.entries(daily || {}).forEach(([dateKey, minutes]) => {
+    const monthKey = dateKey.slice(0, 7);
+    const bucket = monthBuckets.find((entry) => entry.key === monthKey);
+    if (bucket) bucket.focus += minutes || 0;
+  });
+
+  Object.entries(sessionDayMap || {}).forEach(([dateKey, day]) => {
+    const monthKey = dateKey.slice(0, 7);
+    const bucket = monthBuckets.find((entry) => entry.key === monthKey);
+    if (bucket) bucket.blocked += day.blockedAttempts || 0;
+  });
+
+  return {
+    labels: monthBuckets.map((bucket) => bucket.label),
+    focus: monthBuckets.map((bucket) => bucket.focus),
+    blocked: monthBuckets.map((bucket) => bucket.blocked),
+    type: "line",
+  };
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function renderBarChart(daily) {
   const chartEl = el("barChart");
   const labelsEl = el("barLabels");
@@ -1498,69 +2015,83 @@ function bindInsightsShare(insights, patterns) {
 }
 
 function renderInsightsTrendChart(days) {
-  const svg = el("insightsTrendChart");
-  const line = el("insightsChartLine");
-  const area = el("insightsChartArea");
-  const dots = el("insightsChartDots");
-  const labels = el("insightsChartLabels");
-  const grid = el("insightsChartGrid");
-  if (!svg || !line || !area || !dots || !labels || !grid) return;
+  if (typeof Chart === "undefined") return;
+  const canvas = el("insightsTrendChart");
+  if (!canvas) return;
 
-  const width = 640;
-  const height = 220;
-  const left = 20;
-  const right = 20;
-  const top = 18;
-  const bottom = 42;
-  const chartWidth = width - left - right;
-  const chartHeight = height - top - bottom;
-  const maxValue = Math.max(...days.map((day) => day.total), 60);
-  const stepX = days.length > 1 ? chartWidth / (days.length - 1) : chartWidth;
+  if (insightsTrendChart) insightsTrendChart.destroy();
 
-  const points = days.map((day, index) => {
-    const x = left + stepX * index;
-    const y = top + chartHeight - (day.total / maxValue) * chartHeight;
-    return { ...day, x, y };
+  const ctx = canvas.getContext("2d");
+  const gradient = ctx.createLinearGradient(0, 0, 0, 240);
+  gradient.addColorStop(0, "rgba(59,130,246,0.78)");
+  gradient.addColorStop(1, "rgba(59,130,246,0.18)");
+
+  insightsTrendChart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: days.map((day) => day.shortLabel),
+      datasets: [
+        {
+          label: "Tracked browsing",
+          data: days.map((day) => day.total),
+          backgroundColor: gradient,
+          borderColor: "#60a5fa",
+          borderWidth: 1,
+          borderRadius: 8,
+          borderSkipped: false,
+          maxBarThickness: 38,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 500, easing: "easeOutQuart" },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "#222226",
+          borderColor: "rgba(255,255,255,0.12)",
+          borderWidth: 1,
+          padding: { x: 12, y: 10 },
+          titleColor: "#f0eff4",
+          bodyColor: "#cbd5e1",
+          titleFont: { family: "DM Sans", size: 12, weight: "600" },
+          bodyFont: { family: "DM Sans", size: 12 },
+          callbacks: {
+            label(context) {
+              return ` ${formatMinutes(context.raw || 0)}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false, drawBorder: false },
+          ticks: {
+            color: "#8b93a7",
+            font: { family: "DM Sans", size: 11, weight: "500" },
+          },
+          border: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          grid: {
+            color: "rgba(255,255,255,0.05)",
+            drawBorder: false,
+          },
+          ticks: {
+            color: "#667085",
+            font: { family: "DM Sans", size: 11 },
+            callback(value) {
+              return formatMinutes(Number(value) || 0);
+            },
+          },
+          border: { display: false },
+        },
+      },
+    },
   });
-
-  const lineD = points
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
-    .join(" ");
-  const areaD = `${lineD} L ${points[points.length - 1].x} ${height - bottom} L ${points[0].x} ${height - bottom} Z`;
-
-  line.setAttribute("d", lineD);
-  area.setAttribute("d", areaD);
-  line.style.animation = "none";
-  void line.getBoundingClientRect();
-  line.style.animation = "";
-  grid.innerHTML = [0.25, 0.5, 0.75, 1]
-    .map((ratio) => {
-      const y = top + chartHeight - chartHeight * ratio;
-      return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" class="insights-chart-gridline"></line>`;
-    })
-    .join("");
-
-  dots.innerHTML = points
-    .map(
-      (point) => `
-        <g>
-          <circle cx="${point.x}" cy="${point.y}" r="4.5" class="insights-chart-dot"></circle>
-          <circle cx="${point.x}" cy="${point.y}" r="10" class="insights-chart-dot-ring"></circle>
-        </g>
-      `,
-    )
-    .join("");
-
-  labels.innerHTML = points
-    .map(
-      (point) => `
-        <div class="insights-chart-label">
-          <span class="insights-chart-day">${point.shortLabel}</span>
-          <span class="insights-chart-value">${formatMinutes(point.total)}</span>
-        </div>
-      `,
-    )
-    .join("");
 }
 
 function renderInsightsTopSites(topSites, totalTime) {
@@ -1644,17 +2175,82 @@ function renderLifeImpact(lifeImpact, isPro) {
   const visual = el("insightsLifeVisual");
   if (visual) visual.classList.toggle("is-locked", !isPro);
 
-  const ring = el("insightsLifeRingProgress");
-  if (ring) {
-    const radius = 62;
-    const circumference = 2 * Math.PI * radius;
-    const projectedLossPct = Math.max(
-      0,
-      Math.min(100, Math.round((lifeImpact.yearLossDays / 90) * 100)),
-    );
-    ring.style.strokeDasharray = `${circumference}`;
-    ring.style.strokeDashoffset = `${circumference * (1 - projectedLossPct / 100)}`;
-  }
+  renderLifeImpactChart(lifeImpact, isPro);
+}
+
+function renderLifeImpactChart(lifeImpact, isPro) {
+  if (typeof Chart === "undefined") return;
+  const canvas = el("insightsLifeChart");
+  if (!canvas) return;
+
+  if (insightsLifeChart) insightsLifeChart.destroy();
+
+  const ctx = canvas.getContext("2d");
+  const visibleMonth = isPro ? lifeImpact.monthWasted : 0;
+  const visibleYear = isPro ? lifeImpact.yearLossMinutes : 0;
+
+  insightsLifeChart = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: ["Today", "Week", "Month", "Year pace"],
+      datasets: [
+        {
+          data: [
+            Math.max(lifeImpact.todayWasted, 1),
+            Math.max(lifeImpact.weekWasted, 1),
+            Math.max(visibleMonth, 1),
+            Math.max(visibleYear, 1),
+          ],
+          backgroundColor: [
+            "rgba(251, 113, 133, 0.95)",
+            "rgba(248, 113, 113, 0.82)",
+            "rgba(239, 68, 68, 0.68)",
+            isPro ? "rgba(249, 115, 22, 0.56)" : "rgba(255,255,255,0.10)",
+          ],
+          borderColor: [
+            "rgba(17,24,39,1)",
+            "rgba(17,24,39,1)",
+            "rgba(17,24,39,1)",
+            "rgba(17,24,39,1)",
+          ],
+          borderWidth: 4,
+          hoverOffset: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: "72%",
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "#222226",
+          borderColor: "rgba(255,255,255,0.12)",
+          borderWidth: 1,
+          padding: { x: 12, y: 10 },
+          titleColor: "#f0eff4",
+          bodyColor: "#cbd5e1",
+          titleFont: { family: "DM Sans", size: 12, weight: "600" },
+          bodyFont: { family: "DM Sans", size: 12 },
+          callbacks: {
+            label(context) {
+              const label = context.label || "";
+              const value =
+                label === "Today"
+                  ? lifeImpact.todayWasted
+                  : label === "Week"
+                    ? lifeImpact.weekWasted
+                    : label === "Month"
+                      ? visibleMonth
+                      : visibleYear;
+              return ` ${label}: ${formatMinutes(value)}`;
+            },
+          },
+        },
+      },
+    },
+  });
 }
 
 function renderInsights(insights, allUsage, sessionLog, streak, isPro) {

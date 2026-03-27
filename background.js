@@ -55,9 +55,11 @@ const REMINDER_ALARM = "deeplockWeekly";
 const INACTIVITY_ALARM = "inactivityCheck";
 const MORNING_ALARM = "morningCheck";
 const EVENING_ALARM = "eveningCheck";
+const AUTO_KILL_ALARM = "autoKillAlarm";
 const FREE_SESSION_LIMIT = 4;
 const SITE_USAGE_KEY = "siteUsage";
 const SITE_USAGE_TRACKING_KEY = "siteUsageTrackingState";
+const AUTO_KILL_STATE_KEY = "autoKillTrackingState";
 const SESSION_LOG_KEY = "focusSessionLog";
 let isSessionActive = false;
 let autoKillCurrentDomain = null;
@@ -72,10 +74,12 @@ function clearAutoKillTimer(resetDomain = true) {
     clearInterval(autoKillInterval);
     autoKillInterval = null;
   }
+  chrome.alarms.clear(AUTO_KILL_ALARM);
   if (resetDomain) {
     autoKillCurrentDomain = null;
     autoKillStartTime = null;
     autoKillTriggerMinutes = null;
+    chrome.storage.local.remove(AUTO_KILL_STATE_KEY);
   }
 }
 
@@ -191,18 +195,26 @@ async function triggerKillSwitch(domain, autoKillMinutes) {
     },
   });
 
-  chrome.windows.create(
-    {
-      url: chrome.runtime.getURL("auto_kill.html"),
-      type: "popup",
-      width: 460,
-      height: 560,
-      focused: true,
-    },
-    (win) => {
-      autoKillPopupWindowId = win?.id || null;
-    },
-  );
+  const stateData = await chrome.storage.local.get([AUTO_KILL_STATE_KEY]);
+  const targetTabId = stateData[AUTO_KILL_STATE_KEY]?.tabId;
+
+  if (targetTabId) {
+    chrome.tabs.sendMessage(
+      targetTabId,
+      { action: "showAutoKillOverlay", domain, minutes: autoKillMinutes },
+      (response) => {
+        if (chrome.runtime.lastError || !response?.ok) {
+          autoKillPopupOpen = false;
+          autoKillPopupWindowId = null;
+          chrome.tabs.create({ url: chrome.runtime.getURL("auto_kill.html"), active: true });
+        }
+      },
+    );
+    return;
+  }
+
+  autoKillPopupOpen = false;
+  chrome.tabs.create({ url: chrome.runtime.getURL("auto_kill.html"), active: true });
 }
 
 async function maybeTrackAutoKill(tab) {
@@ -219,7 +231,34 @@ async function maybeTrackAutoKill(tab) {
     return;
   }
 
+  if (
+    autoKillCurrentDomain === domain &&
+    autoKillStartTime &&
+    autoKillTriggerMinutes === matchedSite.minutes
+  ) {
+    return;
+  }
+
   if (autoKillCurrentDomain === domain && autoKillStartTime) {
+    autoKillTriggerMinutes = matchedSite.minutes;
+    await chrome.storage.local.set({
+      [AUTO_KILL_STATE_KEY]: {
+        domain,
+        startedAt: autoKillStartTime,
+        minutes: autoKillTriggerMinutes,
+        tabId: tab?.id ?? null,
+        windowId: tab?.windowId ?? null,
+      },
+    });
+    const elapsed = Date.now() - autoKillStartTime;
+    if (elapsed >= autoKillTriggerMinutes * 60 * 1000) {
+      clearAutoKillTimer(false);
+      await triggerKillSwitch(domain, autoKillTriggerMinutes);
+      return;
+    }
+    chrome.alarms.create(AUTO_KILL_ALARM, {
+      when: autoKillStartTime + autoKillTriggerMinutes * 60 * 1000,
+    });
     return;
   }
 
@@ -227,15 +266,18 @@ async function maybeTrackAutoKill(tab) {
   autoKillCurrentDomain = domain;
   autoKillStartTime = Date.now();
   autoKillTriggerMinutes = matchedSite.minutes;
-
-  autoKillInterval = setInterval(async () => {
-    if (!autoKillCurrentDomain || autoKillPopupOpen) return;
-    const elapsed = Date.now() - autoKillStartTime;
-    if (elapsed >= autoKillTriggerMinutes * 60 * 1000) {
-      clearAutoKillTimer(false);
-      await triggerKillSwitch(autoKillCurrentDomain, autoKillTriggerMinutes);
-    }
-  }, 1000);
+  await chrome.storage.local.set({
+    [AUTO_KILL_STATE_KEY]: {
+      domain,
+      startedAt: autoKillStartTime,
+      minutes: autoKillTriggerMinutes,
+      tabId: tab?.id ?? null,
+      windowId: tab?.windowId ?? null,
+    },
+  });
+  chrome.alarms.create(AUTO_KILL_ALARM, {
+    when: autoKillStartTime + autoKillTriggerMinutes * 60 * 1000,
+  });
 }
 
 function getTodayKey() {
@@ -351,7 +393,56 @@ function bindSiteUsageTracking() {
     autoKillPopupWindowId = null;
     autoKillPopupOpen = false;
     autoKillStartTime = Date.now();
+    chrome.storage.local.get([AUTO_KILL_STATE_KEY], (data) => {
+      const state = data[AUTO_KILL_STATE_KEY];
+      if (!state?.domain || !autoKillTriggerMinutes) return;
+      chrome.storage.local.set({
+        [AUTO_KILL_STATE_KEY]: {
+          ...state,
+          startedAt: autoKillStartTime,
+          minutes: autoKillTriggerMinutes,
+        },
+      });
+      chrome.alarms.create(AUTO_KILL_ALARM, {
+        when: autoKillStartTime + autoKillTriggerMinutes * 60 * 1000,
+      });
+    });
   });
+}
+
+async function handleAutoKillAlarm() {
+  const data = await chrome.storage.local.get([AUTO_KILL_STATE_KEY, "autoKillEnabled"]);
+  const state = data[AUTO_KILL_STATE_KEY];
+  if (!data.autoKillEnabled || !state?.domain || !state?.startedAt || !state?.minutes) {
+    clearAutoKillTimer();
+    return;
+  }
+
+  const activeTab = await queryActiveTab(
+    state.windowId !== null && state.windowId !== undefined
+      ? { windowId: state.windowId }
+      : {},
+  );
+  const activeDomain = normalizeTrackedDomain(activeTab?.url);
+
+  if (!activeDomain || activeDomain !== state.domain) {
+    clearAutoKillTimer();
+    return;
+  }
+
+  const elapsed = Date.now() - state.startedAt;
+  if (elapsed < state.minutes * 60 * 1000) {
+    chrome.alarms.create(AUTO_KILL_ALARM, {
+      when: state.startedAt + state.minutes * 60 * 1000,
+    });
+    return;
+  }
+
+  autoKillCurrentDomain = state.domain;
+  autoKillStartTime = state.startedAt;
+  autoKillTriggerMinutes = state.minutes;
+  clearAutoKillTimer(false);
+  await triggerKillSwitch(state.domain, state.minutes);
 }
 
 // ================================
@@ -487,7 +578,7 @@ async function validateLicenseKey() {
 // ================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "startBlock") {
-    const { lockEndTime, duration, intent, pinHash, energyLevel } = msg;
+    const { lockEndTime, duration, intent, pinHash, energyLevel, selectedBlockedDomains } = msg;
 
     // ── SECURITY: Always validate Pro status live against Lemon Squeezy ──
     // NEVER trust isPro from chrome.storage.local — it's writable by anyone
@@ -502,6 +593,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           "todaySessionCount",
           "todayDate",
           "todayBlockedAttempts",
+          "autoKillReturnTabId",
         ],
         (data) => {
           const today = new Date().toISOString().split("T")[0];
@@ -516,10 +608,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
 
           // Custom domains only for verified Pro users
+          const selectedDomains =
+            Array.isArray(selectedBlockedDomains) && selectedBlockedDomains.length
+              ? selectedBlockedDomains
+              : null;
+
           const domains =
-            isProVerified && data.customBlockedDomains?.length
+            selectedDomains ||
+            (isProVerified && data.customBlockedDomains?.length
               ? data.customBlockedDomains
-              : DEFAULT_BLOCKED_DOMAINS;
+              : DEFAULT_BLOCKED_DOMAINS);
 
           chrome.storage.local.set({
             isLocked: true,
@@ -540,6 +638,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           isSessionActive = true;
 
           enableBlocking(domains);
+          const autoKillReturnTabId = data.autoKillReturnTabId;
+          if (autoKillReturnTabId) {
+            chrome.tabs.reload(autoKillReturnTabId, {}, () => {
+              void chrome.runtime.lastError;
+              chrome.tabs.update(autoKillReturnTabId, { active: true }, () => {
+                void chrome.runtime.lastError;
+              });
+            });
+            chrome.storage.local.remove("autoKillReturnTabId");
+          }
           chrome.alarms.create(UNLOCK_ALARM, { when: lockEndTime });
           setupHardMode();
 
@@ -727,41 +835,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.action === "refreshAutoKillTracking") {
+    refreshUsageTracking().then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
   if (msg.action === "autoKillLockNow") {
-    const duration = 25;
-    const intent = `Auto Kill Switch: leave ${msg.domain || "the distraction"} and get back to work`;
-    const lockEndTime = Date.now() + duration * 60 * 1000;
     autoKillPopupOpen = false;
     autoKillPopupWindowId = null;
     clearAutoKillTimer();
-
-    validateLicenseKey().then((validation) => {
-      const isProVerified = validation.isPro;
-      chrome.storage.local.get(["customBlockedDomains"], (data) => {
-        const domains =
-          isProVerified && data.customBlockedDomains?.length
-            ? data.customBlockedDomains
-            : DEFAULT_BLOCKED_DOMAINS;
-
-        chrome.storage.local.set({
-          isLocked: true,
-          lockEndTime,
-          sessionDuration: duration,
-          focusIntent: intent,
-          sessionEnergyLevel: null,
-          sessionStartTime: Date.now(),
-          blockedDomains: domains,
-          lastFocusTime: Date.now(),
-          sessionBlockedAttempts: 0,
-          isPro: isProVerified,
-        });
-        isSessionActive = true;
-
-        enableBlocking(domains);
-        chrome.alarms.create(UNLOCK_ALARM, { when: lockEndTime });
-        setupHardMode();
-        sendResponse({ ok: true });
-      });
+    const domain = msg.domain || "the distraction";
+    chrome.storage.local.get([AUTO_KILL_STATE_KEY], (data) => {
+      const sourceTabId = data[AUTO_KILL_STATE_KEY]?.tabId || null;
+      chrome.storage.local.set(
+      {
+        autoKillIntervention: null,
+        autoKillSuggestedIntent: `Leave ${domain} and finish the next important thing`,
+        autoKillReturnTabId: sourceTabId,
+      },
+      () => {
+        chrome.windows.create(
+          {
+            url: chrome.runtime.getURL("popup.html"),
+            type: "popup",
+            width: 420,
+            height: 760,
+            focused: true,
+          },
+          (win) => {
+            if (chrome.runtime.lastError || !win?.id) {
+              chrome.tabs.create({ url: chrome.runtime.getURL("popup.html"), active: true });
+            }
+            sendResponse({ ok: true });
+          },
+        );
+      },
+    );
     });
     return true;
   }
@@ -770,10 +879,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     autoKillPopupOpen = false;
     autoKillPopupWindowId = null;
     autoKillStartTime = Date.now();
-    chrome.storage.local.get(["ignoredWarnings"], (data) => {
+    chrome.storage.local.get(["ignoredWarnings", AUTO_KILL_STATE_KEY], (data) => {
+      const state = data[AUTO_KILL_STATE_KEY];
+      if (state?.tabId) {
+        chrome.tabs.sendMessage(state.tabId, { action: "hideAutoKillOverlay" }, () => {
+          void chrome.runtime.lastError;
+        });
+      }
       chrome.storage.local.set({
         ignoredWarnings: (data.ignoredWarnings || 0) + 1,
+        autoKillIntervention: null,
+        [AUTO_KILL_STATE_KEY]: state?.domain
+          ? {
+              ...state,
+              startedAt: autoKillStartTime,
+              minutes: autoKillTriggerMinutes || state.minutes || 10,
+            }
+          : state,
       });
+      if (state?.domain) {
+        chrome.alarms.create(AUTO_KILL_ALARM, {
+          when:
+            autoKillStartTime +
+            (autoKillTriggerMinutes || state.minutes || 10) * 60 * 1000,
+        });
+      }
       sendResponse({ ok: true });
     });
     return true;
@@ -1001,6 +1131,7 @@ refreshUsageTracking();
 // ================================
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === UNLOCK_ALARM) unlockSession();
+  else if (alarm.name === AUTO_KILL_ALARM) handleAutoKillAlarm();
   else if (alarm.name === REMINDER_ALARM) checkWeeklyInactivity();
   else if (alarm.name === INACTIVITY_ALARM) checkInactivity();
   else if (alarm.name === MORNING_ALARM) checkMorningFocus();

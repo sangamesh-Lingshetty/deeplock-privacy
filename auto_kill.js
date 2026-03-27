@@ -7,7 +7,7 @@ chrome.runtime.sendMessage({ action: "consumeAutoKillIntervention" }, (res) => {
   const messageEl = document.getElementById("killMessage");
   if (domainEl) domainEl.textContent = currentDomain;
   if (messageEl) {
-    messageEl.textContent = `You've already spent ${data.minutes || 10} minutes on ${currentDomain}.`;
+    messageEl.textContent = `DeepLock noticed ${data.minutes || 10} minutes on ${currentDomain}. Continue if you mean it, or lock back in now.`;
   }
 });
 

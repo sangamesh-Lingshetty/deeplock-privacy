@@ -12,6 +12,7 @@ const urgeCounterText = document.getElementById("urgeCounterText");
 let timerInterval = null;
 let currentLockState = false;
 let currentLockEndTime = 0;
+let exitingBlockedPage = false;
 
 function updateUrgeCounter() {
   chrome.storage.local.get(["todayBlockedAttempts"], (data) => {
@@ -23,6 +24,8 @@ function updateUrgeCounter() {
 }
 
 function exitBlockedPage() {
+  if (exitingBlockedPage) return;
+  exitingBlockedPage = true;
   clearInterval(timerInterval);
   if (timerEl) {
     timerEl.textContent = "SESSION ENDED";
@@ -30,11 +33,7 @@ function exitBlockedPage() {
   }
 
   setTimeout(() => {
-    try {
-      history.back();
-    } catch (_) {
-      window.close();
-    }
+    window.location.replace(chrome.runtime.getURL("dashboard.html#overview"));
   }, 900);
 }
 

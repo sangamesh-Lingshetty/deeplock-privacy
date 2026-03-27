@@ -1,67 +1,118 @@
 // ================================
-// DEEPLOCK PAUSE v2.1
-// FIX: all timers start INSIDE storage callback
-// so lockEndTime is always valid before use
+// DEEPLOCK PAUSE v2.2
+// Exits cleanly when the session ends instead of redirecting into a dead blocker.
 // ================================
 
-const CIRCUMFERENCE = 283; // 2π × 45
+const CIRCUMFERENCE = 283;
+const PAUSE_SECONDS = 10;
 
-// ── Elements ─────────────────────────────────
 const countdownEl = document.getElementById("countdown");
 const ringEl = document.getElementById("ringProg");
 const intentEl = document.getElementById("intentText");
 const focusRemainingEl = document.getElementById("focusRemaining");
 
-// ── Load storage FIRST, then start everything ─
-chrome.storage.local.get(["focusIntent", "lockEndTime"], (data) => {
-  // 1. Show intent immediately
+let countdownInterval = null;
+let focusInterval = null;
+let currentLockState = false;
+let currentLockEndTime = 0;
+let seconds = PAUSE_SECONDS;
+let isExitingPause = false;
+
+function stopPauseTimers() {
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
+  if (focusInterval) {
+    clearInterval(focusInterval);
+    focusInterval = null;
+  }
+}
+
+function exitPausePage() {
+  if (isExitingPause) return;
+  isExitingPause = true;
+  stopPauseTimers();
+  window.location.replace(chrome.runtime.getURL("dashboard.html#overview"));
+}
+
+function updateFocusTimer() {
+  if (!focusRemainingEl) return;
+
+  if (!currentLockState || !currentLockEndTime) {
+    exitPausePage();
+    return;
+  }
+
+  const remaining = Math.max(0, currentLockEndTime - Date.now());
+  if (remaining <= 0) {
+    exitPausePage();
+    return;
+  }
+
+  const m = Math.floor(remaining / 60000);
+  const s = Math.floor((remaining % 60000) / 1000);
+  focusRemainingEl.textContent = `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function tickCountdown() {
+  if (!currentLockState || !currentLockEndTime || currentLockEndTime <= Date.now()) {
+    exitPausePage();
+    return;
+  }
+
+  seconds -= 1;
+  if (countdownEl) countdownEl.textContent = Math.max(0, seconds);
+  if (ringEl) {
+    ringEl.style.strokeDashoffset = CIRCUMFERENCE * (Math.max(0, seconds) / PAUSE_SECONDS);
+  }
+
+  if (seconds <= 0) {
+    stopPauseTimers();
+    window.location.replace(chrome.runtime.getURL("blocked.html"));
+  }
+}
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local") return;
+
+  if (changes.isLocked) {
+    currentLockState = !!changes.isLocked.newValue;
+    if (!currentLockState) exitPausePage();
+  }
+
+  if (changes.lockEndTime) {
+    currentLockEndTime = changes.lockEndTime.newValue || 0;
+    if (!currentLockEndTime) exitPausePage();
+  }
+
+  if (changes.focusIntent && intentEl) {
+    intentEl.textContent = changes.focusIntent.newValue || "Deep work";
+  }
+});
+
+chrome.storage.local.get(["focusIntent", "lockEndTime", "isLocked"], (data) => {
+  currentLockState = !!data.isLocked;
+  currentLockEndTime = data.lockEndTime || 0;
+
   if (intentEl) {
     intentEl.textContent = data.focusIntent || "Deep work";
   }
 
-  // 2. lockEndTime is now guaranteed valid
-  const lockEndTime = data.lockEndTime || 0;
-
-  // 3. Focus timer — reads lockEndTime from closure (always valid)
-  function updateFocusTimer() {
-    const remaining = Math.max(0, lockEndTime - Date.now());
-    const m = Math.floor(remaining / 60000);
-    const s = Math.floor((remaining % 60000) / 1000);
-    if (focusRemainingEl) {
-      focusRemainingEl.textContent = `${m}:${s.toString().padStart(2, "0")}`;
-    }
+  if (!currentLockState || !currentLockEndTime || currentLockEndTime <= Date.now()) {
+    exitPausePage();
+    return;
   }
+
   updateFocusTimer();
-  const focusInterval = setInterval(updateFocusTimer, 1000);
-
-  // 4. Countdown ring (10 → 0, then redirect)
-  let seconds = 10;
-
-  function tick() {
-    seconds--;
-
-    if (countdownEl) countdownEl.textContent = seconds;
-    if (ringEl) {
-      ringEl.style.strokeDashoffset = CIRCUMFERENCE * (seconds / 10);
-    }
-
-    if (seconds <= 0) {
-      clearInterval(countdownInterval);
-      clearInterval(focusInterval);
-      // Navigate to blocked page
-      window.location.replace(chrome.runtime.getURL("blocked.html"));
-    }
-  }
-
-  const countdownInterval = setInterval(tick, 1000);
+  focusInterval = setInterval(updateFocusTimer, 1000);
+  countdownInterval = setInterval(tickCountdown, 1000);
 });
 
-// ── Tell background to count this attempt ────
-// Wrapped in try/catch — safe even if SW not ready
 try {
   chrome.runtime.sendMessage({ action: "incrementBlocked" }, () => {
-    void chrome.runtime.lastError; // suppress unchecked error warning
+    void chrome.runtime.lastError;
   });
-} catch (e) {
-  /* ignore */
+} catch (_) {
+  // ignore
 }

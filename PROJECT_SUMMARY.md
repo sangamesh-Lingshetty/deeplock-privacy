@@ -229,6 +229,7 @@ Flow:
 - Chrome redirects request to `pause.html`
 - short countdown runs
 - page redirects to `blocked.html`
+- if the session has already ended, interruption pages exit cleanly instead of showing a stale `0 min` blocker
 
 This creates friction and reinforces commitment.
 
@@ -295,9 +296,15 @@ Flow:
 - user enables Smart Lock in Blocked Sites tab
 - user sets a trigger threshold in minutes
 - background watches active distracting/custom domains
+- background stores active Smart Lock tracking state locally
+- background schedules a Chrome alarm for the trigger threshold
+- dashboard changes refresh Smart Lock tracking immediately
 - if user stays too long on the same distracting domain
-- DeepLock opens an intervention popup window
-- user chooses Lock Now or Continue Anyway
+- DeepLock opens an intervention overlay on the active site
+- user chooses `Lock it` or `Continue`
+- `Lock it` opens the main DeepLock lock flow with a suggested intent prefilled
+- after the user starts the new focus session, DeepLock reloads the original distracting tab so blocking applies immediately
+- `Continue` closes the intervention and restarts the watch timer
 
 ---
 
@@ -362,6 +369,7 @@ DeepLock uses `chrome.storage.local` heavily.
 
 - `autoKillEnabled`
 - `autoKillMinutes`
+- `autoKillSites`
 - `autoKillIntervention`
 - `ignoredWarnings`
 
@@ -452,6 +460,8 @@ Shows:
 
 - default blocked sites
 - Smart Lock (Auto Kill) settings
+- Smart Lock armed-site controls and per-site trigger minutes
+- Smart Lock live status summary and intervention readiness state
 - category-based site browser
 - search/add custom sites
 - clear and manage custom blocked list
@@ -565,6 +575,13 @@ Clamped between `0` and `100`.
 - Best Energy pattern
 - Top Sites card
 - Share your week export
+- right-side Life Impact visualization card
+
+### Insights Visualization Notes
+
+- Usage Trend now uses a clearer Chart.js bar chart for the last 7 days
+- Life Impact uses a smaller right-side visualization card instead of a large static ring layout
+- core Insights calculations and storage logic remain unchanged; only presentation was improved
 
 ### Daily Insight Message
 
@@ -609,6 +626,16 @@ Light mode:
 - warm premium paper-like palette
 - softer borders
 - maintained contrast and readability
+
+### Typography System
+
+DeepLock now uses a shared typography system across the product:
+
+- `DM Sans` for body text, controls, labels, and general UI copy
+- `Syne` for key display headings and premium page titles
+- `Space Mono` for stats, timers, badges, and technical/meta UI
+
+This keeps popup and dashboard typography visually consistent while preserving a premium product feel.
 
 ---
 
