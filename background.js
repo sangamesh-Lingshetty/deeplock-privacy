@@ -47,6 +47,15 @@ const SMART_LOCK_DEFAULT_ENABLED = new Set([
   "facebook.com",
   "tiktok.com",
 ]);
+const DISTRACTING_DOMAINS = new Set([
+  "youtube.com",
+  "twitter.com",
+  "x.com",
+  "instagram.com",
+  "reddit.com",
+  "facebook.com",
+  "tiktok.com",
+]);
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const INACTIVITY_48H = 48 * 60 * 60 * 1000;
@@ -61,6 +70,7 @@ const SITE_USAGE_KEY = "siteUsage";
 const SITE_USAGE_TRACKING_KEY = "siteUsageTrackingState";
 const AUTO_KILL_STATE_KEY = "autoKillTrackingState";
 const SESSION_LOG_KEY = "focusSessionLog";
+const TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING = false;
 let isSessionActive = false;
 let autoKillCurrentDomain = null;
 let autoKillStartTime = null;
@@ -187,10 +197,15 @@ async function getAutoKillMatch(domain) {
 async function triggerKillSwitch(domain, autoKillMinutes) {
   if (autoKillPopupOpen) return;
   autoKillPopupOpen = true;
+  const strictSettings = await chrome.storage.local.get(["autoKillStrictMode", "isPro"]);
+  const strictMode =
+    !!strictSettings.autoKillStrictMode &&
+    (!!strictSettings.isPro || TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING);
   await chrome.storage.local.set({
     autoKillIntervention: {
       domain,
       minutes: autoKillMinutes,
+      strictMode,
       triggeredAt: Date.now(),
     },
   });
@@ -199,15 +214,30 @@ async function triggerKillSwitch(domain, autoKillMinutes) {
   const targetTabId = stateData[AUTO_KILL_STATE_KEY]?.tabId;
 
   if (targetTabId) {
-    chrome.tabs.sendMessage(
-      targetTabId,
-      { action: "showAutoKillOverlay", domain, minutes: autoKillMinutes },
-      (response) => {
-        if (chrome.runtime.lastError || !response?.ok) {
+    chrome.scripting.executeScript(
+      {
+        target: { tabId: targetTabId },
+        files: ["smartlock_overlay.js"],
+      },
+      () => {
+        if (chrome.runtime.lastError) {
           autoKillPopupOpen = false;
           autoKillPopupWindowId = null;
           chrome.tabs.create({ url: chrome.runtime.getURL("auto_kill.html"), active: true });
+          return;
         }
+
+        chrome.tabs.sendMessage(
+          targetTabId,
+          { action: "showAutoKillOverlay", domain, minutes: autoKillMinutes, strictMode },
+          (response) => {
+            if (chrome.runtime.lastError || !response?.ok) {
+              autoKillPopupOpen = false;
+              autoKillPopupWindowId = null;
+              chrome.tabs.create({ url: chrome.runtime.getURL("auto_kill.html"), active: true });
+            }
+          },
+        );
       },
     );
     return;
@@ -284,6 +314,380 @@ function getTodayKey() {
   return new Date().toISOString().split("T")[0];
 }
 
+function getDistractingMinutesFromSites(sites) {
+  return Object.entries(sites || {}).reduce((sum, [domain, minutes]) => {
+    return sum + (DISTRACTING_DOMAINS.has(normalizeTrackedDomain(`https://${domain}`) || domain) ? Number(minutes) || 0 : 0);
+  }, 0);
+}
+
+function getFocusScoreFromSites(sites) {
+  const total = Object.values(sites || {}).reduce(
+    (sum, value) => sum + (Number(value) || 0),
+    0,
+  );
+  if (total <= 0) return 100;
+  const distracting = getDistractingMinutesFromSites(sites);
+  return Math.max(0, Math.min(100, Math.round(((total - distracting) / total) * 100)));
+}
+
+function getTopFocusHourFromLog(entries, dateKey) {
+  const hourMap = {};
+  (entries || [])
+    .filter((entry) => (entry.date || "").startsWith(dateKey))
+    .forEach((entry) => {
+      const hour = Number(entry.hour);
+      if (!Number.isFinite(hour)) return;
+      hourMap[hour] = (hourMap[hour] || 0) + (Number(entry.duration) || 0);
+    });
+  const pairs = Object.entries(hourMap);
+  if (!pairs.length) return null;
+  pairs.sort((a, b) => b[1] - a[1]);
+  return Number(pairs[0][0]);
+}
+
+function mapCloudHistoryToLocal(rows) {
+  return (rows || []).map((row, index) => {
+    const dateValue =
+      row.date ||
+      (row.created_at
+        ? row.created_at.split("T")[0]
+        : getTodayKey());
+    return {
+      id: row.id || `${dateValue}_${index}`,
+      date: dateValue,
+      completedAt: row.created_at || `${dateValue}T12:00:00`,
+      duration: Number(row.duration) || 0,
+      energyLevel: row.energy_level || null,
+      blockedAttempts: Number(row.blocked_attempts) || 0,
+      intent: row.intent || "",
+      hour:
+        Number.isFinite(row.start_hour) && row.start_hour >= 0
+          ? Number(row.start_hour)
+          : 12,
+      source: row.source || "cloud",
+      completed: row.completed !== false,
+    };
+  });
+}
+
+function mapCloudDailyStatsToLocal(rows) {
+  return (rows || []).reduce((acc, row) => {
+    if (!row?.date) return acc;
+    acc[row.date] = Number(row.focus_minutes) || 0;
+    return acc;
+  }, {});
+}
+
+function mapCloudSiteUsageToLocal(rows) {
+  return (rows || []).reduce((acc, row) => {
+    if (!row?.date) return acc;
+    acc[row.date] = {
+      date: row.date,
+      sites: row.sites || {},
+    };
+    return acc;
+  }, {});
+}
+
+async function syncCurrentDaySiteUsageToCloud(dateKey, sites) {
+  try {
+    const session = await getSession();
+    if (!session) return;
+    await saveSiteUsageDay({
+      date: dateKey,
+      sites,
+      distractingMinutes: getDistractingMinutesFromSites(sites),
+      focusScore: getFocusScoreFromSites(sites),
+    });
+  } catch (_) {
+    // cloud sync is best effort
+  }
+}
+
+function getCloudSessionSignature(row) {
+  const dateValue =
+    row?.date ||
+    (row?.created_at ? row.created_at.split("T")[0] : "");
+  return [
+    dateValue,
+    Number(row?.duration) || 0,
+    (row?.intent || "").trim(),
+    Number.isFinite(row?.start_hour) ? Number(row.start_hour) : -1,
+    Number(row?.blocked_attempts) || 0,
+    row?.source || "manual",
+  ].join("|");
+}
+
+function getLocalSessionSignature(entry) {
+  return [
+    entry?.date || "",
+    Number(entry?.duration) || 0,
+    (entry?.intent || "").trim(),
+    Number.isFinite(entry?.hour) ? Number(entry.hour) : -1,
+    Number(entry?.blockedAttempts) || 0,
+    entry?.source || "manual",
+  ].join("|");
+}
+
+async function syncLocalStateToCloud() {
+  const session = await getSession();
+  if (!session) return false;
+
+  try {
+    const local = await chrome.storage.local.get([
+      "customBlockedDomains",
+      "autoKillEnabled",
+      "autoKillMinutes",
+      "autoKillSites",
+      "dashboardTheme",
+      "totalSessions",
+      "totalFocusMinutes",
+      "currentStreak",
+      "longestStreak",
+      "dailySessions",
+      SESSION_LOG_KEY,
+      SITE_USAGE_KEY,
+    ]);
+
+    const [settings, cloudHistoryRows] = await Promise.all([
+      loadCloudSettings(),
+      getSessionHistory(3650),
+    ]);
+
+    const customBlockedDomains =
+      Array.isArray(local.customBlockedDomains) && local.customBlockedDomains.length
+        ? local.customBlockedDomains
+        : settings?.custom_blocked_domains || [];
+    const autoKillSites =
+      local.autoKillSites && Object.keys(local.autoKillSites).length
+        ? local.autoKillSites
+        : settings?.auto_kill_sites || {};
+    const autoKillEnabled =
+      typeof local.autoKillEnabled === "boolean"
+        ? local.autoKillEnabled
+        : !!settings?.auto_kill_enabled;
+    const autoKillMinutes =
+      Number.isFinite(local.autoKillMinutes) && local.autoKillMinutes > 0
+        ? Number(local.autoKillMinutes)
+        : Number(settings?.auto_kill_minutes) || 10;
+    const dashboardTheme =
+      typeof local.dashboardTheme === "string"
+        ? local.dashboardTheme
+        : settings?.dashboard_theme || "dark";
+
+    await Promise.all([
+      saveCustomDomains(customBlockedDomains),
+      saveSmartLockConfig({
+        enabled: autoKillEnabled,
+        minutes: autoKillMinutes,
+        sites: autoKillSites,
+      }),
+      saveDashboardTheme(dashboardTheme),
+      syncStats({
+        currentStreak: Math.max(
+          Number(local.currentStreak) || 0,
+          Number(settings?.current_streak) || 0,
+        ),
+        longestStreak: Math.max(
+          Number(local.longestStreak) || 0,
+          Number(settings?.longest_streak) || 0,
+        ),
+        totalSessions: Math.max(
+          Number(local.totalSessions) || 0,
+          Number(settings?.total_sessions) || 0,
+        ),
+        totalFocusMinutes: Math.max(
+          Number(local.totalFocusMinutes) || 0,
+          Number(settings?.total_focus_minutes) || 0,
+        ),
+      }),
+    ]);
+
+    const cloudSignatures = new Set((cloudHistoryRows || []).map(getCloudSessionSignature));
+    const localSessions = Array.isArray(local[SESSION_LOG_KEY]) ? local[SESSION_LOG_KEY] : [];
+    let syncedSessions = 0;
+    for (const entry of localSessions) {
+      const duration = Number(entry?.duration) || 0;
+      if (duration <= 0) continue;
+      const signature = getLocalSessionSignature(entry);
+      if (cloudSignatures.has(signature)) continue;
+
+      await saveSession({
+        date: entry.date || getTodayKey(),
+        duration,
+        intent: entry.intent || "",
+        completed: entry.completed !== false,
+        blockedAttempts: Number(entry.blockedAttempts) || 0,
+        energyLevel: entry.energyLevel || null,
+        source: entry.source || "manual",
+        startHour:
+          Number.isFinite(entry.hour) && entry.hour >= 0 ? Number(entry.hour) : null,
+        scheduledSessionId: entry.scheduledSessionId || null,
+        blockedDomainsSnapshot: Array.isArray(entry.blockedDomainsSnapshot)
+          ? entry.blockedDomainsSnapshot
+          : [],
+      });
+      cloudSignatures.add(signature);
+      syncedSessions += 1;
+    }
+
+    const dayMap = local.dailySessions || {};
+    const logEntries = localSessions;
+    let syncedDays = 0;
+    for (const [dateKey, focusMinutes] of Object.entries(dayMap)) {
+      const dayEntries = logEntries.filter((entry) => entry.date === dateKey);
+      await saveDailyStats({
+        date: dateKey,
+        focusMinutes: Number(focusMinutes) || 0,
+        sessionsCount: dayEntries.length,
+        blockedAttempts: dayEntries.reduce(
+          (sum, entry) => sum + (Number(entry.blockedAttempts) || 0),
+          0,
+        ),
+        completedSessions: dayEntries.filter((entry) => entry.completed !== false).length,
+        topFocusHour: getTopFocusHourFromLog(dayEntries, dateKey),
+      });
+      syncedDays += 1;
+    }
+
+    const usageMap = local[SITE_USAGE_KEY] || {};
+    let syncedUsageDays = 0;
+    for (const [dateKey, day] of Object.entries(usageMap)) {
+      const sites = day?.sites || {};
+      if (!Object.keys(sites).length) continue;
+      await saveSiteUsageDay({
+        date: dateKey,
+        sites,
+        distractingMinutes: getDistractingMinutesFromSites(sites),
+        focusScore: getFocusScoreFromSites(sites),
+      });
+      syncedUsageDays += 1;
+    }
+
+    console.log(
+      "[DeepLock] Local-to-cloud sync complete:",
+      JSON.stringify({
+        sessions: syncedSessions,
+        dailyStats: syncedDays,
+        siteUsageDays: syncedUsageDays,
+      }),
+    );
+
+    return true;
+  } catch (error) {
+    console.log("[DeepLock] Local-to-cloud sync skipped:", error?.message || error);
+    return false;
+  }
+}
+
+async function hydrateCloudStateToLocal() {
+  const session = await getSession();
+  if (!session) return false;
+
+  try {
+    const [settings, historyRows, dailyRows, usageRows, schedules] = await Promise.all([
+      loadCloudSettings(),
+      getSessionHistory(365),
+      getDailyStats(365),
+      getSiteUsage(365),
+      getSchedules(),
+    ]);
+
+    const updates = {};
+    if (settings) {
+      const sub = getSubscriptionStateFromSettings(settings);
+      if (Array.isArray(settings.custom_blocked_domains)) {
+        updates.customBlockedDomains = settings.custom_blocked_domains;
+      }
+      if (typeof settings.auto_kill_enabled === "boolean") {
+        updates.autoKillEnabled = settings.auto_kill_enabled;
+      }
+      if (Number.isFinite(settings.auto_kill_minutes)) {
+        updates.autoKillMinutes = settings.auto_kill_minutes;
+      }
+      if (settings.auto_kill_sites && typeof settings.auto_kill_sites === "object") {
+        updates.autoKillSites = settings.auto_kill_sites;
+      }
+      if (typeof settings.dashboard_theme === "string") {
+        updates.dashboardTheme = settings.dashboard_theme;
+      }
+      updates.isPro = !!sub.isPro;
+      updates.subscriptionPlan = sub.plan || "free";
+      updates.subscriptionStatus = sub.status || "inactive";
+      updates.subscriptionSource = sub.source || "";
+      updates.subscriptionRenewsAt = sub.renewsAt || null;
+      updates.lemonsqueezyCustomerId = sub.customerId || null;
+      updates.lemonsqueezySubscriptionId = sub.subscriptionId || null;
+      if (Number.isFinite(settings.current_streak)) {
+        updates.currentStreak = settings.current_streak;
+      }
+      if (Number.isFinite(settings.longest_streak)) {
+        updates.longestStreak = settings.longest_streak;
+      }
+      if (Number.isFinite(settings.total_sessions)) {
+        updates.totalSessions = settings.total_sessions;
+      }
+      if (Number.isFinite(settings.total_focus_minutes)) {
+        updates.totalFocusMinutes = settings.total_focus_minutes;
+      }
+    }
+
+    if (Array.isArray(dailyRows) && dailyRows.length) {
+      updates.dailySessions = mapCloudDailyStatsToLocal(dailyRows);
+    }
+
+    if (Array.isArray(historyRows) && historyRows.length) {
+      updates[SESSION_LOG_KEY] = mapCloudHistoryToLocal(historyRows);
+      const todayKey = getTodayKey();
+      const todayRows = historyRows.filter((row) => row.date === todayKey);
+      updates.todayDate = todayKey;
+      updates.todaySessionCount = todayRows.length;
+      updates.todayBlockedAttempts = todayRows.reduce(
+        (sum, row) => sum + (Number(row.blocked_attempts) || 0),
+        0,
+      );
+    }
+
+    if (Array.isArray(usageRows) && usageRows.length) {
+      updates[SITE_USAGE_KEY] = mapCloudSiteUsageToLocal(usageRows);
+    }
+
+    if (Array.isArray(schedules) && schedules.length) {
+      updates.schedules = schedules.map((schedule) => {
+        const scheduledMs = new Date(
+          schedule.scheduled_at || schedule.scheduledAt,
+        ).getTime();
+        return {
+          ...schedule,
+          scheduledAt:
+            toLocalScheduleValue(
+              new Date(schedule.scheduled_at || schedule.scheduledAt),
+            ) || schedule.scheduled_at || schedule.scheduledAt,
+          scheduledMs,
+          synced: true,
+        };
+      });
+    }
+
+    if (Object.keys(updates).length) {
+      await chrome.storage.local.set(updates);
+    }
+
+    if (Array.isArray(updates.schedules)) {
+      updates.schedules.forEach((schedule) => {
+        const fireTime = Number(schedule.scheduledMs) || 0;
+        if (fireTime > Date.now()) {
+          chrome.alarms.create(`schedule_${schedule.id}`, { when: fireTime });
+        }
+      });
+    }
+    return true;
+  } catch (error) {
+    console.log("[DeepLock] Cloud hydrate skipped:", error?.message || error);
+    return false;
+  }
+}
+
 function normalizeTrackedDomain(url) {
   try {
     const parsed = new URL(url);
@@ -307,6 +711,7 @@ async function addSiteUsage(domain, elapsedMs) {
   siteUsage[today] = todayUsage;
 
   await chrome.storage.local.set({ [SITE_USAGE_KEY]: siteUsage });
+  await syncCurrentDaySiteUsageToCloud(today, todayUsage.sites);
 }
 
 async function flushTrackedSiteUsage() {
@@ -476,6 +881,7 @@ async function activateLicenseKey(licenseKey) {
         licenseInstanceId: data.instance?.id || null,
         licenseValidatedAt: Date.now(),
       });
+      saveLegacyLicenseEntitlement().catch(() => {});
       return { success: true };
     } else {
       // Key exists but activation limit reached (already on max devices)
@@ -514,7 +920,7 @@ async function activateLicenseKey(licenseKey) {
 }
 
 // Called on every popup open AND on every startBlock — server always overrides local storage
-async function validateLicenseKey() {
+async function validateLegacyLicenseKey() {
   const data = await chrome.storage.local.get([
     "licenseKey",
     "licenseInstanceId",
@@ -584,7 +990,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // NEVER trust isPro from chrome.storage.local — it's writable by anyone
     // with DevTools. validateLicenseKey() hits the LS server every time.
     // Falls back to 7-day cache ONLY if network is genuinely offline.
-    validateLicenseKey().then((validation) => {
+    validateEntitlement().then((validation) => {
       const isProVerified = validation.isPro;
 
       chrome.storage.local.get(
@@ -688,7 +1094,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === "validateLicense") {
-    validateLicenseKey().then((result) => {
+    validateEntitlement().then((result) => {
       sendResponse(result);
     });
     return true;
@@ -792,7 +1198,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // GOOGLE SIGN IN
   if (msg.action === "signIn") {
     signInWithGoogle()
-      .then((result) => sendResponse({ success: true, ...result }))
+      .then(async (result) => {
+        await syncLocalStateToCloud();
+        await hydrateCloudStateToLocal();
+        sendResponse({ success: true, ...result });
+      })
       .catch((e) => sendResponse({ success: false, error: e.message }));
     return true;
   }
@@ -818,10 +1228,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // LOAD CLOUD SETTINGS
   if (msg.action === "loadCloudSettings") {
     loadCloudSettings().then((settings) => {
+      const updates = {};
       if (settings?.custom_blocked_domains?.length) {
-        chrome.storage.local.set({
-          customBlockedDomains: settings.custom_blocked_domains,
-        });
+        updates.customBlockedDomains = settings.custom_blocked_domains;
+      }
+      if (typeof settings?.auto_kill_enabled === "boolean") {
+        updates.autoKillEnabled = settings.auto_kill_enabled;
+      }
+      if (Number.isFinite(settings?.auto_kill_minutes)) {
+        updates.autoKillMinutes = settings.auto_kill_minutes;
+      }
+      if (settings?.auto_kill_sites && typeof settings.auto_kill_sites === "object") {
+        updates.autoKillSites = settings.auto_kill_sites;
+      }
+      if (typeof settings?.dashboard_theme === "string") {
+        updates.dashboardTheme = settings.dashboard_theme;
+      }
+      if (Object.keys(updates).length) {
+        chrome.storage.local.set(updates);
       }
       sendResponse({ settings });
     });
@@ -879,7 +1303,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     autoKillPopupOpen = false;
     autoKillPopupWindowId = null;
     autoKillStartTime = Date.now();
-    chrome.storage.local.get(["ignoredWarnings", AUTO_KILL_STATE_KEY], (data) => {
+    chrome.storage.local.get(["ignoredWarnings", AUTO_KILL_STATE_KEY, "autoKillStrictMode", "isPro"], (data) => {
+      if (
+        data.autoKillStrictMode &&
+        (data.isPro || TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING)
+      ) {
+        sendResponse({
+          ok: false,
+          strictMode: true,
+          message: "Strict Mode is enabled. You must lock back in.",
+        });
+        return;
+      }
       const state = data[AUTO_KILL_STATE_KEY];
       if (state?.tabId) {
         chrome.tabs.sendMessage(state.tabId, { action: "hideAutoKillOverlay" }, () => {
@@ -1022,6 +1457,35 @@ function setNuclearUninstallURL() {
   );
 }
 
+async function validateEntitlement() {
+  const session = await getSession();
+
+  if (session) {
+    try {
+      const settings = await loadCloudSettings();
+      const sub = getSubscriptionStateFromSettings(settings || {});
+      await chrome.storage.local.set({
+        isPro: !!sub.isPro,
+        subscriptionPlan: sub.plan || "free",
+        subscriptionStatus: sub.status || "inactive",
+        subscriptionSource: sub.source || "",
+        subscriptionRenewsAt: sub.renewsAt || null,
+        lemonsqueezyCustomerId: sub.customerId || null,
+        lemonsqueezySubscriptionId: sub.subscriptionId || null,
+      });
+      if (sub.isPro) return { isPro: true, source: "supabase" };
+    } catch (e) {
+      console.log("[DeepLock] Supabase entitlement check failed:", e?.message || e);
+    }
+  }
+
+  const legacy = await validateLegacyLicenseKey();
+  return {
+    isPro: !!legacy.isPro,
+    source: legacy.isPro ? "legacy_license" : "none",
+  };
+}
+
 // ── Layer 3: Detect mid-session reinstall ──────────────────────
 function checkMidSessionQuit() {
   chrome.storage.local.get(
@@ -1079,7 +1543,7 @@ chrome.runtime.onInstalled.addListener(() => {
 // ================================
 chrome.runtime.onStartup.addListener(() => {
   checkLockStatus();
-  validateLicenseKey();
+  validateEntitlement();
   scheduleSmartAlarms();
   refreshUsageTracking();
 
@@ -1095,10 +1559,12 @@ chrome.runtime.onStartup.addListener(() => {
     });
   });
 
-  // Pull cloud settings for Pro users (custom sites, etc.)
-  chrome.storage.local.get(["isPro", "sbSignedIn"], (data) => {
-    if (data.isPro && data.sbSignedIn) {
-      loadCloudSettings().catch(() => {});
+  // Backfill local data to cloud, then hydrate local state from cloud for signed-in users
+  chrome.storage.local.get(["sbSignedIn"], (data) => {
+    if (data.sbSignedIn) {
+      syncLocalStateToCloud()
+        .then(() => hydrateCloudStateToLocal())
+        .catch(() => {});
     }
   });
 
@@ -1616,13 +2082,19 @@ function appendSessionLog(entry) {
 }
 
 function unlockSession() {
-  if (!isSessionActive) {
-    console.log("No active session — ignoring unlock");
-    return;
-  }
-
-  isSessionActive = false;
   chrome.storage.local.get(
+    ["isLocked", "lockEndTime"],
+    (state) => {
+      const storageThinksLocked =
+        !!state.isLocked || (!!state.lockEndTime && state.lockEndTime > 0);
+
+      if (!isSessionActive && !storageThinksLocked) {
+        console.log("No active session — ignoring unlock");
+        return;
+      }
+
+      isSessionActive = false;
+      chrome.storage.local.get(
     [
       "sessionDuration",
       "sessionStartTime",
@@ -1637,8 +2109,11 @@ function unlockSession() {
       "sessionEnergyLevel",
       "sessionBlockedAttempts",
       "isPro",
+      "sbSignedIn",
       "sessionPinHash",
       "scheduledSessionId",
+      "blockedDomains",
+      SESSION_LOG_KEY,
     ],
     (data) => {
       const duration = data.sessionDuration || 0;
@@ -1648,7 +2123,11 @@ function unlockSession() {
       const energyLevel = data.sessionEnergyLevel || null;
       const sessionBlockedAttempts = data.sessionBlockedAttempts || 0;
       const isPro = !!data.isPro;
+      const isSignedIn = !!data.sbSignedIn;
       const scheduledId = data.scheduledSessionId || null;
+      const blockedDomainsSnapshot = Array.isArray(data.blockedDomains)
+        ? data.blockedDomains
+        : [];
       const now = Date.now();
       const elapsedMs =
         sessionStartTime && lockEndTime
@@ -1726,7 +2205,17 @@ function unlockSession() {
         energyLevel,
         blockedAttempts: sessionBlockedAttempts,
         intent,
+        source: scheduledId ? "scheduled" : "manual",
       });
+
+      const dayEntries = (data[SESSION_LOG_KEY] || []).concat([
+        {
+          date: today,
+          hour: sessionStartTime ? new Date(sessionStartTime).getHours() : new Date().getHours(),
+          duration: focusMinutes,
+          blockedAttempts: sessionBlockedAttempts,
+        },
+      ]).filter((entry) => entry.date === today);
 
       // ── COMPLETION NOTIFICATION ───────────────────────
       chrome.notifications.create(`sessionDone_${Date.now()}`, {
@@ -1739,13 +2228,19 @@ function unlockSession() {
       });
 
       // ── SUPABASE SYNC (Pro users) ─────────────────────
-      if (isPro) {
+      if (isSignedIn) {
         // 1. Save session to history table
         saveSession({
           date: today,
           duration: focusMinutes,
           intent,
           completed: true,
+          blockedAttempts: sessionBlockedAttempts,
+          energyLevel,
+          source: scheduledId ? "scheduled" : "manual",
+          startHour: sessionStartTime ? new Date(sessionStartTime).getHours() : new Date().getHours(),
+          scheduledSessionId: scheduledId,
+          blockedDomainsSnapshot,
         }).catch(() => {});
 
         // 2. Sync stats (streak etc)
@@ -1756,7 +2251,19 @@ function unlockSession() {
           totalFocusMinutes: totalFocusMins,
         }).catch(() => {});
 
-        // 3. If this was a scheduled session, mark it used in Supabase
+        saveDailyStats({
+          date: today,
+          focusMinutes: dailySessions[today] || 0,
+          sessionsCount: dayEntries.length,
+          blockedAttempts: dayEntries.reduce(
+            (sum, entry) => sum + (Number(entry.blockedAttempts) || 0),
+            0,
+          ),
+          completedSessions: dayEntries.length,
+          topFocusHour: getTopFocusHourFromLog(dayEntries, today),
+        }).catch(() => {});
+
+        // 4. If this was a scheduled session, mark it used in Supabase
         if (scheduledId) {
           markScheduleUsed(scheduledId).catch(() => {});
         }
@@ -1764,6 +2271,8 @@ function unlockSession() {
 
       console.log(
         `[DeepLock] Session unlocked. Streak: ${currentStreak}d, Total: ${totalSessions}, Intent: "${intent}"`,
+      );
+        },
       );
     },
   );
@@ -1826,11 +2335,15 @@ function fireScheduledSession(alarmName) {
         return;
       }
 
-      // Pro users get custom domains, free users get defaults
+      const scheduleSnapshot = Array.isArray(sched.blockedDomainsSnapshot)
+        ? sched.blockedDomainsSnapshot
+        : [];
       const domains =
-        data.isPro && data.customBlockedDomains?.length
-          ? data.customBlockedDomains
-          : DEFAULT_BLOCKED_DOMAINS;
+        sched.siteMode === "custom" && scheduleSnapshot.length
+          ? scheduleSnapshot
+          : data.isPro && data.customBlockedDomains?.length
+            ? data.customBlockedDomains
+            : DEFAULT_BLOCKED_DOMAINS;
 
       // ── WRITE FULL SESSION STATE ─────────────────────────
       chrome.storage.local.set(
@@ -1892,7 +2405,7 @@ function handleScheduleRepeat(sched, allSchedules) {
   }
 
   // Repeating: calculate next fire time
-  const current = new Date(sched.scheduledAt);
+  const current = new Date(sched.scheduledAt || sched.scheduled_at);
   let next = new Date(current);
 
   if (repeat === "daily") {
@@ -1909,10 +2422,10 @@ function handleScheduleRepeat(sched, allSchedules) {
     next.setDate(next.getDate() + 7);
   }
 
-  const nextISO = next.toISOString();
   const newSched = {
     ...sched,
-    scheduledAt: nextISO,
+    scheduledAt: toLocalScheduleValue(next),
+    scheduledMs: next.getTime(),
     id: `sched_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
   };
 
@@ -1924,8 +2437,20 @@ function handleScheduleRepeat(sched, allSchedules) {
   chrome.alarms.create(`schedule_${newSched.id}`, { when: next.getTime() });
 
   // Sync to Supabase
-  saveSchedule(newSched).catch(() => {});
+  saveSchedule({
+    ...newSched,
+    scheduledAt: new Date(newSched.scheduledMs).toISOString(),
+  }).catch(() => {});
   markScheduleUsed(schedId).catch(() => {});
+}
+
+function toLocalScheduleValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 function checkWeeklyInactivity() {

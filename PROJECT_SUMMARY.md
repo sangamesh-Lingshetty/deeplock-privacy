@@ -22,20 +22,26 @@ DeepLock currently includes:
 - Focus session timer
 - Hard website blocking during active sessions
 - Block interruption pages
-- Session completion reward screen
 - Local session stats and streak tracking
 - Free vs Pro feature gating
 - Lemon Squeezy license activation and validation
 - Google sign-in with Supabase cloud sync
+- Account-first subscription flow
 - Pro analytics dashboard
 - Custom blocked websites
 - Scheduled focus sessions
+- Schedule-specific blocked site selection
 - Website usage tracking
 - Insights tab with focus analytics
+- subscription-aware Overview and History premium unlock states
+- subscription-aware Profile account and upgrade center
+- Smart Lock Strict Mode restored to Pro-only enforcement with latest-overlay injection on trigger
 - Dashboard dark/light theme toggle
+- UI polish and theme-contrast pass across the dashboard
 - Pre-session energy check-in
 - Shareable weekly stat card
 - Smart Lock (Auto Kill)
+- Smart Lock Strict Mode
 
 ---
 
@@ -97,7 +103,6 @@ Contains tabs for:
 
 - Overview
 - History
-- Streaks
 - Blocked Sites
 - Profile
 - Schedule
@@ -108,9 +113,21 @@ Also includes:
 - Pro gate
 - theme toggle
 - analytics rendering
+- full-width Overview dashboard with Today / 7D / 30D / 1Y analytics
+- subscription teaser overlay for locked 30D / 1Y Overview ranges
 - schedule management
+- schedule-specific blocked-site picker
 - subscription management UI
+- account-first Profile upgrade experience for signed-out, free, and Pro users
 - Smart Lock settings UI
+- Smart Lock Strict Mode toggle and no-continue intervention behavior
+- full-width Blocked Sites workspace layout
+- upgraded History workspace with grouped session archive, range filters, Quick Start, and subscription-aware archive gating
+
+Blocked Sites tab layout:
+
+- left column for custom blocked site search and management
+- right column for Smart Lock status, armed sites, and add-more site controls
 
 ### [supabase.js](/D:/deeplock/supabase.js)
 
@@ -122,9 +139,14 @@ Handles:
 - session retrieval
 - sign out
 - profile upsert
+- subscription state parsing from synced settings
 - session history save
 - cloud stats sync
 - custom domain sync
+- Smart Lock settings sync
+- dashboard theme sync
+- daily stats sync
+- site usage sync
 - schedule CRUD with Supabase
 
 ### [pause.html](/D:/deeplock/pause.html), [pause.js](/D:/deeplock/pause.js)
@@ -136,18 +158,6 @@ Behavior:
 - shows a short urge-delay countdown
 - shows focus intent and remaining session time
 - redirects to blocked page after countdown
-
-### [session_complete.html](/D:/deeplock/session_complete.html), [session_complete.js](/D:/deeplock/session_complete.js)
-
-Reward screen shown when a focus session ends.
-
-Behavior:
-
-- shows session completion state
-- shows duration completed
-- shows urges resisted during that session
-- shows current streak
-- gives quick actions to start another session or open Insights
 
 ### [blocked.html](/D:/deeplock/blocked.html), [blocked.js](/D:/deeplock/blocked.js)
 
@@ -245,7 +255,6 @@ Flow:
 - daily session minutes update
 - streak logic updates
 - notification is shown
-- session completion screen opens
 - session is appended into focus session log
 - Pro users sync session + stats to Supabase
 
@@ -253,10 +262,13 @@ Flow:
 
 Flow:
 
-- user buys Pro on Lemon Squeezy or enters license key
-- background activates and validates against Lemon Squeezy API
-- local `isPro` is overwritten only from server-verified state
-- Pro UI is unlocked
+- user signs in with Google first
+- DeepLock links product state to the signed-in account
+- user upgrades through Lemon Squeezy checkout
+- webhook or backend updates subscription fields in Supabase
+- extension reads Pro entitlement from Supabase settings as the source of truth
+- local `isPro` is only a cached reflection of server-backed entitlement
+- legacy license keys remain only as a recovery / migration fallback
 
 ## 5. Google Sign In + Cloud Sync
 
@@ -266,17 +278,21 @@ Flow:
 - `supabase.js` launches auth flow
 - tokens are stored locally
 - profile is upserted in Supabase
-- dashboard/history/settings can sync across devices
+- background hydrates local extension state from cloud
+- dashboard/history/settings/insights can sync across devices
 
 ## 6. Scheduled Sessions
 
 Flow:
 
 - Pro user creates a schedule in dashboard
+- user can keep `Use my current blocked list` or switch to `Choose sites for this schedule`
+- custom schedule site mode shows 4 inline primary toggles plus a `More sites` jump into Blocked Sites
 - schedule is saved locally first
 - background alarm is registered
 - optional Supabase save runs in background
 - when alarm fires, background starts a focus session automatically
+- custom schedule site mode uses the saved blocked-site snapshot instead of the live global block list
 - repeating schedules generate the next schedule
 
 ## 7. Insights
@@ -288,6 +304,7 @@ Flow:
 - Insights tab reads this data
 - chart and cards are rendered
 - non-Pro users see lock/upgrade state
+- Overview, streak, and dashboard stats depend on the session unlock flow writing fresh values back into local storage
 
 ## 8. Auto Kill Switch
 
@@ -300,8 +317,10 @@ Flow:
 - background schedules a Chrome alarm for the trigger threshold
 - dashboard changes refresh Smart Lock tracking immediately
 - if user stays too long on the same distracting domain
+- DeepLock reinjects the latest Smart Lock overlay script into the active tab before showing the intervention, so Strict Mode stays correct even on already-open pages
 - DeepLock opens an intervention overlay on the active site
 - user chooses `Lock it` or `Continue`
+- if Smart Lock Strict Mode is enabled, the intervention removes `Continue` and forces the user back into `Lock it`
 - `Lock it` opens the main DeepLock lock flow with a suggested intent prefilled
 - after the user starts the new focus session, DeepLock reloads the original distracting tab so blocking applies immediately
 - `Continue` closes the intervention and restarts the watch timer
@@ -336,6 +355,12 @@ DeepLock uses `chrome.storage.local` heavily.
 - `sessionCompleteData`
 - `focusSessionLog`
 
+Notes:
+
+- session completion must clear blocking rules and set `isLocked = false`
+- session completion must also write `totalSessions`, `totalFocusMinutes`, `currentStreak`, `longestStreak`, `dailySessions`, and `lastSessionDate`
+- if unlock fails, blocked sites can keep redirecting and dashboard numbers will stop updating
+
 ### Pro / Billing Keys
 
 - `isPro`
@@ -359,6 +384,8 @@ DeepLock uses `chrome.storage.local` heavily.
 
 - `schedules`
 - `scheduledSessionId`
+- `scheduleDraftSiteMode`
+- `scheduleDraftBlockedDomains`
 
 ### Insights / Usage Tracking Keys
 
@@ -370,6 +397,7 @@ DeepLock uses `chrome.storage.local` heavily.
 - `autoKillEnabled`
 - `autoKillMinutes`
 - `autoKillSites`
+- `autoKillStrictMode`
 - `autoKillIntervention`
 - `ignoredWarnings`
 
@@ -385,20 +413,37 @@ DeepLock uses `chrome.storage.local` heavily.
 
 - default blocked sites only
 - daily session limit
-- no custom site list
-- no premium dashboard access
-- no premium insights access
+- default Smart Lock sites with editable per-site timers
+- no custom blocked site list
+- no extra Smart Lock sites beyond the default pack
+- no Smart Lock Strict Mode
+- no long-range Overview trends
+- no long-range History archive
+- one upcoming one-time schedule only
+- no repeating schedules
+- no custom site sets per schedule
+- no schedule sync across devices
+- Insights limited to Today and 7D with core cards
+- limited premium insights depth
 
 ## Pro Plan
 
 - unlimited sessions
 - longer/custom durations
 - custom blocked sites
+- extra Smart Lock sites beyond the default pack
+- Smart Lock Strict Mode
 - dashboard analytics
+- 30D and 1Y Overview trend access
+- 30D / 90D / all-time History archive access
 - cloud sync
 - session history sync
 - streak protection via cloud
-- scheduled sessions
+- repeating schedules
+- custom site sets per schedule
+- multiple upcoming schedules
+- schedule sync across devices
+- 30D and 1Y Insights with long-range pattern view
 - insights tab
 
 ---
@@ -436,14 +481,22 @@ Shows:
 - today summary
 - all-time records
 - motivation quote
+- Free: `Today` and `7D`
+- Pro: `30D` and `1Y` with premium blur + upgrade CTA for locked ranges
 
 ## 2. History
 
 Shows:
 
+- grouped session archive by day
 - local history fallback
 - cloud session history when signed in
-- last 90 days session list
+- 7D / 30D / 90D / all-time range filters
+- range summary stats like total focus, average session, and longest session
+- blocked-attempt context for recent sessions
+- Quick Start controls with preset durations and custom duration
+- Free: `7D`
+- Pro: `30D`, `90D`, and `All` with premium archive blur + upgrade CTA for locked ranges
 
 ## 3. Streaks
 
@@ -461,10 +514,13 @@ Shows:
 - default blocked sites
 - Smart Lock (Auto Kill) settings
 - Smart Lock armed-site controls and per-site trigger minutes
+- Smart Lock Strict Mode toggle that removes the `Continue` path from interventions
 - Smart Lock live status summary and intervention readiness state
 - category-based site browser
 - search/add custom sites
 - clear and manage custom blocked list
+- Free: full control over the default Smart Lock distraction pack
+- Pro: custom blocked sites, extra Smart Lock sites, and Smart Lock Strict Mode with premium blur + upgrade CTA
 
 ## 5. Profile
 
@@ -472,6 +528,9 @@ Shows:
 
 - Google sign-in / sign-out
 - synced account state
+- account protection messaging for signed-out users
+- plan badge and progress-protection state for signed-in users
+- upgrade value card for free users
 - license key display
 - subscription management UI
 - support contact
@@ -481,12 +540,20 @@ Shows:
 
 Shows:
 
+- full-width schedule planner hero
 - create scheduled session form
+- blocked-site mode selector for current list vs schedule-specific list
+- inline schedule site picker for YouTube, Instagram, X / Twitter, and Reddit
+- `More sites` shortcut into Blocked Sites
 - repeat options
 - live preview
 - upcoming schedules list
 - schedule delete
-- test/debug helpers
+- no visible test/debug controls in dashboard UI
+- local-first schedule storage with cloud merge fallback
+- normalized repeat scheduling to preserve local time correctly
+- Free: one upcoming one-time schedule using the current blocked list
+- Pro: repeating schedules, custom schedule site sets, multiple upcoming schedules, and schedule sync
 
 ## 7. Insights
 
@@ -502,6 +569,8 @@ Shows:
 - top 5 sites with favicon, time, and bar
 - shareable stat card action
 - Pro lock state for non-Pro users
+- Free: Today and 7D with core score, breakdown, and top-site insight
+- Pro: 30D and 1Y long-range pattern view with emotional upgrade overlay
 
 ---
 
@@ -658,9 +727,16 @@ DeepLock now includes stronger emotional loops:
 DeepLock uses Lemon Squeezy for:
 
 - Pro purchases
-- license activation
-- license validation
+- hosted checkout
 - customer portal / billing management
+
+Recommended production subscription flow:
+
+- sign-in required before upgrade
+- Lemon Squeezy checkout after sign-in
+- webhook updates Supabase subscription fields
+- extension validates Pro from Supabase-backed subscription state
+- legacy license remains only as a fallback for older buyers
 
 Subscription management UI in dashboard includes:
 
@@ -682,6 +758,10 @@ Supabase is used for:
 - cloud session history
 - cloud stats sync
 - custom blocked domains sync
+- Smart Lock config sync
+- dashboard theme sync
+- daily stats sync for range analytics
+- site usage sync for Insights
 - schedule sync
 
 ### Main Supabase Functions
@@ -693,8 +773,14 @@ Supabase is used for:
 - `saveSession()`
 - `syncStats()`
 - `saveCustomDomains()`
+- `saveSmartLockConfig()`
+- `saveDashboardTheme()`
 - `loadCloudSettings()`
 - `getSessionHistory()`
+- `saveDailyStats()`
+- `getDailyStats()`
+- `saveSiteUsageDay()`
+- `getSiteUsage()`
 - `saveSchedule()`
 - `getSchedules()`
 - `deleteSchedule()`

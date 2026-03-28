@@ -9,6 +9,7 @@
     "notifications",
     "declarativeNetRequestWithHostAccess",
     "declarativeNetRequestFeedback",
+    "scripting",
     "tabs",
     "identity",
     "management"

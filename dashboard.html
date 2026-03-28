@@ -51,14 +51,6 @@
             </svg>
             History
           </a>
-          <a class="nav-item" data-tab="streaks">
-            <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
-              <path
-                d="M7.5 0C7.5 0 4 5 4 8.5a3.5 3.5 0 007 0C11 5 7.5 0 7.5 0z"
-              />
-            </svg>
-            Streaks
-          </a>
           <a class="nav-item" data-tab="sites">
             <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
               <circle
@@ -146,47 +138,81 @@
       </aside>
 
       <main class="main">
+        <section class="active-session-banner" id="activeSessionBanner" style="display: none">
+          <div class="active-session-banner-main">
+            <div class="active-session-kicker">Active Session</div>
+            <div class="active-session-title" id="activeSessionIntent">Deep work</div>
+            <div class="active-session-sub" id="activeSessionMeta">0:00 left</div>
+          </div>
+          <div class="active-session-banner-sites">
+            <div class="active-session-sites-head">
+              <span>Blocked right now</span>
+              <span id="activeSessionSitesCount">0 enabled</span>
+            </div>
+            <div class="active-session-sites-row" id="activeSessionSitesRow"></div>
+          </div>
+        </section>
+
         <!-- OVERVIEW -->
         <div id="tab-overview" class="tab-content active">
           <div class="overview-page">
-            <div class="overview-header">
-              <div>
-                <h1 class="overview-title">Your Focus Report</h1>
-                <p class="overview-sub" id="ovDateRange">Loading...</p>
+            <div class="overview-hero-card">
+              <div class="overview-header">
+                <div>
+                  <h1 class="overview-title">Your Focus Report</h1>
+                  <p class="overview-sub" id="ovDateRange">Loading...</p>
+                </div>
+                <div class="overview-header-side">
+                  <div class="overview-range-tabs">
+                    <button class="overview-range-tab active" data-range="today" type="button">Today</button>
+                    <button class="overview-range-tab" data-range="7d" type="button">7D</button>
+                    <button class="overview-range-tab" data-range="30d" type="button">30D</button>
+                    <button class="overview-range-tab" data-range="1y" type="button">1Y</button>
+                  </div>
+                  <div class="overview-score-pill">
+                    <span class="overview-score-num" id="ovWeekScore">—</span>
+                    <span class="overview-score-tag">Focus Score</span>
+                  </div>
+                </div>
               </div>
-              <div class="overview-score-pill">
-                <span class="overview-score-num" id="ovWeekScore">—</span>
-                <span class="overview-score-tag">Week Score</span>
+
+              <div class="overview-stat-grid">
+                <div class="overview-stat-card">
+                  <div class="overview-stat-delta up" id="ovHoursDelta">—</div>
+                  <div class="overview-stat-value accent" id="ovTotalHours">—</div>
+                  <div class="overview-stat-label">Focused Time</div>
+                </div>
+                <div class="overview-stat-card green">
+                  <div class="overview-stat-delta up" id="ovSessionsDelta">—</div>
+                  <div class="overview-stat-value green" id="ovTotalSessions">—</div>
+                  <div class="overview-stat-label">Sessions Completed</div>
+                </div>
+                <div class="overview-stat-card">
+                  <div class="overview-stat-delta" id="ovBlockedDelta">—</div>
+                  <div class="overview-stat-value muted" id="ovBlockedAttempts">—</div>
+                  <div class="overview-stat-label">Distractions Blocked</div>
+                </div>
+                <div class="overview-stat-card fire">
+                  <div class="overview-stat-delta" id="ovStreakDelta">Stay live</div>
+                  <div class="overview-stat-value fire" id="ovCurrentStreak">—</div>
+                  <div class="overview-stat-label">Current Streak</div>
+                </div>
+              </div>
+
+              <div class="overview-psych-line" id="ovPsychLine">
+                Loading your focus momentum...
               </div>
             </div>
 
-            <div class="overview-stat-grid">
-              <div class="overview-stat-card">
-                <div class="overview-stat-delta up" id="ovHoursDelta">—</div>
-                <div class="overview-stat-value accent" id="ovTotalHours">—</div>
-                <div class="overview-stat-label">Total Hours Focused</div>
-              </div>
-              <div class="overview-stat-card green">
-                <div class="overview-stat-delta up" id="ovSessionsDelta">—</div>
-                <div class="overview-stat-value green" id="ovTotalSessions">—</div>
-                <div class="overview-stat-label">Sessions Completed</div>
-              </div>
-              <div class="overview-stat-card">
-                <div class="overview-stat-delta" id="ovBlockedDelta">—</div>
-                <div class="overview-stat-value muted" id="ovBlockedAttempts">—</div>
-                <div class="overview-stat-label">Distractions Blocked</div>
-              </div>
-              <div class="overview-stat-card fire">
-                <div class="overview-stat-delta" id="ovStreakDelta">Stay live</div>
-                <div class="overview-stat-value fire" id="ovCurrentStreak">—</div>
-                <div class="overview-stat-label">Current Streak</div>
-              </div>
-            </div>
-
-            <div class="overview-chart-card">
-              <div class="overview-chart-header">
-                <div class="overview-chart-title">Focus Activity</div>
-                <div class="overview-chart-actions">
+            <div class="overview-main-grid">
+              <div class="overview-chart-card">
+                <div class="overview-chart-header">
+                  <div>
+                    <div class="overview-chart-title">Focus Activity</div>
+                    <div class="overview-chart-sub" id="ovChartNote">
+                      Clear view of your real progress and drift.
+                    </div>
+                  </div>
                   <div class="overview-chart-legend">
                     <div class="overview-legend-item">
                       <span class="overview-legend-dot"></span>
@@ -194,29 +220,67 @@
                     </div>
                     <div class="overview-legend-item">
                       <span class="overview-legend-dot fire"></span>
-                      <span>Distractions</span>
+                      <span>Blocks</span>
                     </div>
                   </div>
-                  <div class="overview-range-tabs">
-                    <button class="overview-range-tab active" data-range="7d" type="button">7D</button>
-                    <button class="overview-range-tab" data-range="1m" type="button">1M</button>
-                    <button class="overview-range-tab" data-range="6m" type="button">6M</button>
-                    <button class="overview-range-tab" data-range="1y" type="button">1Y</button>
+                </div>
+                <div class="overview-chart-wrap">
+                  <canvas id="overviewFocusChart"></canvas>
+                </div>
+              </div>
+
+              <div class="overview-balance-card">
+                <div class="overview-card-title">Goal Progress</div>
+                <div class="overview-balance-wrap">
+                  <div class="overview-balance-chart-wrap">
+                    <canvas id="overviewBalanceChart"></canvas>
+                    <div class="overview-balance-center">
+                      <div class="overview-balance-score" id="ovBalanceScore">0%</div>
+                      <div class="overview-balance-label">of target</div>
+                    </div>
+                  </div>
+                  <div class="overview-balance-stats">
+                    <div class="overview-balance-row">
+                      <span class="overview-balance-name">Focused</span>
+                      <span class="overview-balance-value" id="ovRangeFocus">0m</span>
+                    </div>
+                    <div class="overview-balance-row">
+                      <span class="overview-balance-name">Target</span>
+                      <span class="overview-balance-value" id="ovRangeTarget">0m</span>
+                    </div>
+                    <div class="overview-balance-row">
+                      <span class="overview-balance-name">Daily Avg</span>
+                      <span class="overview-balance-value" id="ovRangeAverage">0m</span>
+                    </div>
                   </div>
                 </div>
               </div>
-              <div class="overview-chart-wrap">
-                <canvas id="overviewFocusChart"></canvas>
+              <div class="overview-premium-overlay" id="overviewPremiumOverlay" style="display: none">
+                <div class="overview-premium-card">
+                  <div class="overview-premium-kicker" id="overviewPremiumKicker">Pro Overview</div>
+                  <div class="overview-premium-title" id="overviewPremiumTitle">
+                    Unlock long-range focus trends
+                  </div>
+                  <div class="overview-premium-copy" id="overviewPremiumCopy">
+                    See whether your discipline is compounding over the long run, not just how today feels.
+                  </div>
+                  <button class="overview-premium-btn" id="overviewPremiumBtn" type="button">
+                    Unlock full focus trends
+                  </button>
+                  <div class="overview-premium-note" id="overviewPremiumNote">
+                    30D and 1Y ranges are part of DeepLock Pro.
+                  </div>
+                </div>
               </div>
             </div>
 
             <div class="overview-bottom-grid">
               <div class="overview-today-card">
-                <div class="overview-card-title">Today's Summary</div>
+                <div class="overview-card-title" id="ovPulseTitle">Today at a glance</div>
                 <div class="overview-today-nums">
                   <div class="overview-today-num-item">
                     <div class="overview-today-big" id="ovTodayMins">0</div>
-                    <div class="overview-today-unit">Min Focused</div>
+                    <div class="overview-today-unit" id="ovPulseFocusLabel">Min Focused</div>
                   </div>
                   <div class="overview-today-num-item">
                     <div class="overview-today-big" id="ovTodaySessions">0</div>
@@ -224,12 +288,12 @@
                   </div>
                   <div class="overview-today-num-item">
                     <div class="overview-today-big fire" id="ovTodayUrges">0</div>
-                    <div class="overview-today-unit">Urges Blocked</div>
+                    <div class="overview-today-unit">Blocks</div>
                   </div>
                 </div>
                 <div class="overview-goal-bar-wrap">
                   <div class="overview-goal-bar-label">
-                    <span>Daily Goal</span>
+                    <span id="ovGoalLabelTitle">Range Goal</span>
                     <span id="ovTodayGoalLabel">0 / 120 min</span>
                   </div>
                   <div class="overview-goal-bar-track">
@@ -276,92 +340,6 @@
               </button>
             </div>
           </div>
-          <div class="page-header">
-            <div>
-              <h1 class="page-title">Your Focus Report</h1>
-              <p class="page-sub" id="dateRange">Loading...</p>
-            </div>
-            <div class="score-pill">
-              <span class="score-num" id="weekScore">—</span
-              ><span class="score-label">week score</span>
-            </div>
-          </div>
-          <div class="big-stats">
-            <div class="big-stat">
-              <div class="big-stat-val" id="totalHours">—</div>
-              <div class="big-stat-label">Total Hours Focused</div>
-            </div>
-            <div class="big-stat highlight">
-              <div class="big-stat-val" id="totalSessions">—</div>
-              <div class="big-stat-label">Sessions Completed</div>
-            </div>
-            <div class="big-stat">
-              <div class="big-stat-val" id="blockedAttempts">—</div>
-              <div class="big-stat-label">Distractions Blocked</div>
-            </div>
-            <div class="big-stat">
-              <div class="big-stat-val streak-val" id="currentStreak">—</div>
-              <div class="big-stat-label">Current Streak 🔥</div>
-            </div>
-          </div>
-          <div class="card chart-card">
-            <div class="card-header">
-              <div class="card-title">Daily Focus — Last 7 Days</div>
-              <div class="chart-legend">
-                <span class="legend-dot"></span
-                ><span class="legend-label">Minutes focused</span>
-              </div>
-            </div>
-            <div class="bar-chart" id="barChart"></div>
-            <div class="bar-labels" id="barLabels"></div>
-          </div>
-          <div class="cards-row">
-            <div class="card">
-              <div class="card-title" style="margin-bottom: 14px">
-                Today's Summary
-              </div>
-              <div class="today-grid">
-                <div class="today-item">
-                  <div class="today-num" id="todayMins">0</div>
-                  <div class="today-label">min focused</div>
-                </div>
-                <div class="today-item">
-                  <div class="today-num" id="todaySessions">0</div>
-                  <div class="today-label">sessions</div>
-                </div>
-              </div>
-              <div class="today-bar-wrap">
-                <div class="today-bar-fill" id="todayBarFill"></div>
-              </div>
-              <div class="today-bar-label">Goal: 120 min / day</div>
-            </div>
-            <div class="card">
-              <div class="card-title" style="margin-bottom: 14px">
-                All-Time Records
-              </div>
-              <div class="record-list">
-                <div class="record-item">
-                  <span class="record-label">Longest Streak</span
-                  ><span class="record-val" id="longestStreak">—</span>
-                </div>
-                <div class="record-item">
-                  <span class="record-label">Best Day</span
-                  ><span class="record-val" id="bestDay">—</span>
-                </div>
-                <div class="record-item">
-                  <span class="record-label">Avg Session</span
-                  ><span class="record-val" id="avgSession">—</span>
-                </div>
-                <div class="record-item">
-                  <span class="record-label">Total Hours</span
-                  ><span class="record-val" id="totalHoursAll">—</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="card motivation-card">
-            <div class="motivation-quote" id="motivationQuote">Loading...</div>
-          </div>
         </div>
 
         <!-- HISTORY -->
@@ -373,73 +351,108 @@
             </div>
             <div class="sync-source-badge" id="historySource">LOCAL</div>
           </div>
-          <div class="card" style="padding: 0; overflow: hidden">
-            <div class="history-header-row">
-              <span>Date</span><span>Intent</span><span>Duration</span
-              ><span>Status</span>
+          <div class="history-top-grid">
+            <div class="card history-quickstart-card">
+              <div class="history-card-kicker">Quick Start</div>
+              <div class="history-quickstart-title">Reflect, then lock back in.</div>
+              <div class="history-quickstart-sub">
+                Start another focus session right from your progress archive.
+              </div>
+              <div class="history-duration-chips" id="historyDurationChips">
+                <button class="history-duration-chip active" type="button" data-min="25">25m</button>
+                <button class="history-duration-chip" type="button" data-min="45">45m</button>
+                <button class="history-duration-chip" type="button" data-min="60">60m</button>
+                <button class="history-duration-chip" type="button" data-min="90">90m</button>
+                <button class="history-duration-chip" type="button" data-min="custom">Custom</button>
+              </div>
+              <div class="history-blocksites-card">
+                <div class="history-blocksites-kicker">Block Sites</div>
+                <div class="history-blocksites-sub">
+                  Keep only the distractions that matter.
+                </div>
+                <div class="history-blocksites-list" id="historyQuickSitesList"></div>
+                <button class="history-blocksites-more" id="historyMoreSitesBtn" type="button">
+                  More sites
+                </button>
+              </div>
+              <div class="history-quickstart-row">
+                <div class="history-custom-wrap" id="historyCustomWrap" style="display: none">
+                  <input id="historyCustomMinutes" class="history-custom-input" type="number" min="1" max="240" value="50" />
+                  <span class="history-custom-unit">min</span>
+                </div>
+                <input
+                  id="historyQuickIntent"
+                  class="history-intent-input"
+                  maxlength="80"
+                  placeholder="What are you locking in to do?"
+                />
+                <button class="history-start-btn" id="historyStartBtn" type="button">
+                  Lock In Now
+                </button>
+              </div>
+              <div class="history-inline-msg" id="historyQuickStartMsg"></div>
             </div>
-            <div id="historyList" class="history-list"></div>
-          </div>
-        </div>
 
-        <!-- STREAKS -->
-        <div id="tab-streaks" class="tab-content">
-          <div class="page-header">
-            <div>
-              <h1 class="page-title">Streak Tracker</h1>
-              <p class="page-sub">
-                Consistency is the only metric that matters
-              </p>
-            </div>
-          </div>
-          <div class="streak-hero">
-            <div class="streak-fire">🔥</div>
-            <div class="streak-number" id="streakHeroNum">0</div>
-            <div class="streak-label">day streak</div>
-            <div class="streak-sub" id="streakSub">
-              Start a session to begin your streak.
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-title" style="margin-bottom: 16px">
-              Activity — Last 28 Days
-            </div>
-            <div class="heatmap" id="heatmap"></div>
-            <div class="heatmap-legend">
-              <span style="color: #555; font-size: 11px">Less</span>
-              <span class="heat-cell heat-0"></span
-              ><span class="heat-cell heat-1"></span
-              ><span class="heat-cell heat-2"></span>
-              <span class="heat-cell heat-3"></span
-              ><span class="heat-cell heat-4"></span
-              ><span class="heat-cell heat-5"></span>
-              <span style="color: #555; font-size: 11px">More</span>
-            </div>
-          </div>
-          <div class="cards-row" style="grid-template-columns: 1fr 1fr 1fr">
-            <div class="card" style="text-align: center">
-              <div
-                class="streak-stat-num"
-                id="ssCurrentStreak"
-                style="color: #f97316"
-              >
-                0
+            <div class="card history-summary-card">
+              <div class="history-card-kicker">Range Snapshot</div>
+              <div class="history-summary-grid">
+                <div class="history-summary-stat">
+                  <span class="history-summary-value" id="historyTotalSessions">0</span>
+                  <span class="history-summary-label">Sessions</span>
+                </div>
+                <div class="history-summary-stat">
+                  <span class="history-summary-value" id="historyTotalFocus">0m</span>
+                  <span class="history-summary-label">Focused</span>
+                </div>
+                <div class="history-summary-stat">
+                  <span class="history-summary-value" id="historyAvgSession">0m</span>
+                  <span class="history-summary-label">Avg Session</span>
+                </div>
+                <div class="history-summary-stat">
+                  <span class="history-summary-value" id="historyLongestSession">0m</span>
+                  <span class="history-summary-label">Longest</span>
+                </div>
               </div>
-              <div class="streak-stat-label">Current Streak</div>
-            </div>
-            <div class="card" style="text-align: center">
-              <div
-                class="streak-stat-num"
-                id="ssLongestStreak"
-                style="color: #3b82f6"
-              >
-                0
+              <div class="history-proof-row">
+                <div class="history-proof-pill" id="historyBlockedTotal">0 urges resisted</div>
+                <div class="history-proof-pill" id="historyConsistency">No consistency signal yet</div>
               </div>
-              <div class="streak-stat-label">Longest Streak</div>
             </div>
-            <div class="card" style="text-align: center">
-              <div class="streak-stat-num" id="ssActiveDays">0</div>
-              <div class="streak-stat-label">Active Days</div>
+          </div>
+
+          <div class="card history-feed-card">
+            <div class="history-feed-header">
+              <div>
+                <div class="history-card-kicker">Session Archive</div>
+                <div class="history-feed-title">Grouped by day, so momentum is obvious.</div>
+              </div>
+              <div class="history-range-tabs" id="historyRangeTabs">
+                <button class="history-range-tab active" type="button" data-range="7d">7D</button>
+                <button class="history-range-tab" type="button" data-range="30d">30D</button>
+                <button class="history-range-tab" type="button" data-range="90d">90D</button>
+                <button class="history-range-tab" type="button" data-range="all">All</button>
+              </div>
+            </div>
+            <div class="history-feed-sub" id="historyFeedSub">
+              Last 7 days of sessions, grouped into real workdays.
+            </div>
+            <div id="historyList" class="history-feed-list"></div>
+            <div class="history-premium-overlay" id="historyPremiumOverlay" style="display: none">
+              <div class="history-premium-card">
+                <div class="history-premium-kicker" id="historyPremiumKicker">Pro Archive</div>
+                <div class="history-premium-title" id="historyPremiumTitle">
+                  Unlock your full focus archive
+                </div>
+                <div class="history-premium-copy" id="historyPremiumCopy">
+                  See every recovery, every streak stretch, and the sessions that actually shaped your progress.
+                </div>
+                <button class="history-premium-btn" id="historyPremiumBtn" type="button">
+                  Unlock full history
+                </button>
+                <div class="history-premium-note" id="historyPremiumNote">
+                  30D, 90D, and full archive history are part of DeepLock Pro.
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -449,23 +462,15 @@
           <div class="page-header">
             <div>
               <h1 class="page-title">Blocked Sites</h1>
-              <p class="page-sub">
-                Control what gets blocked during your sessions
-              </p>
+              <p class="page-sub">Control what gets blocked during your sessions</p>
             </div>
           </div>
 
-          <!-- DEFAULT SITES -->
-          <div class="card" style="margin-bottom: 16px">
-            <div class="sites-section-title">Always blocked (default)</div>
-            <div class="default-sites-grid" id="defaultSitesGrid"></div>
-          </div>
-
-          <div class="card" style="margin-bottom: 16px">
+          <div class="card sites-smartlock-card" style="margin-bottom: 16px">
             <div class="smartlock-shell">
               <div class="smartlock-hero">
                 <div>
-                  <div class="sites-section-title">Smart Lock (Auto Kill)</div>
+                  <div class="sites-section-title">Smart Lock</div>
                   <div class="smartlock-copy">
                     Automatically interrupts you when you spend too long on selected
                     sites.
@@ -488,71 +493,66 @@
                   <div class="smartlock-metric-label">Sites Armed</div>
                   <div class="smartlock-metric-value" id="smartLockArmedValue">0</div>
                 </div>
-                <div class="smartlock-metric-card">
-                  <div class="smartlock-metric-label">Default Trigger</div>
-                  <div class="smartlock-metric-value" id="smartLockTriggerValue">10 min</div>
-                </div>
               </div>
 
-              <div class="smartlock-signal-bar">
-                <div class="smartlock-signal-chip" id="smartLockSignalChip">Not watching yet</div>
-                <div class="smartlock-signal-copy" id="smartLockSignalCopy">
-                  Pick the sites that usually pull you away. DeepLock will interrupt the loop before it turns into a lost hour.
-                </div>
-              </div>
+              <input
+                id="autoKillMinutes"
+                class="smartlock-input smartlock-hidden-input"
+                type="number"
+                min="1"
+                max="180"
+                value="10"
+              />
 
-              <div class="smartlock-row">
-                <label class="smartlock-input-label" for="autoKillMinutes">
-                  Default trigger
+              <div class="smartlock-inline-note" id="smartLockStatusNote">
+                Turn Smart Lock on, then choose the sites you want DeepLock to watch.
+              </div>
+              <div class="smartlock-strict-row">
+                <div>
+                  <div class="smartlock-strict-title">
+                    Strict Mode
+                    <span class="smartlock-site-badge">Pro</span>
+                  </div>
+                  <div class="smartlock-strict-copy" id="smartLockStrictCopy">
+                    When an intervention appears, Continue is disabled. You have to lock back in.
+                  </div>
+                </div>
+                <label class="smartlock-toggle smartlock-strict-toggle">
+                  <input type="checkbox" id="autoKillStrictMode" />
+                  <span class="smartlock-slider"></span>
                 </label>
-                <div class="smartlock-input-wrap">
-                  <input
-                    id="autoKillMinutes"
-                    class="smartlock-input"
-                    type="number"
-                    min="1"
-                    max="180"
-                    value="10"
-                  />
-                  <span class="smartlock-input-unit">min</span>
-                </div>
-              </div>
-
-              <div class="smartlock-status-note" id="smartLockStatusNote">
-                Smart Lock is off. Turn it on to watch your selected distraction sites.
-              </div>
-
-              <div class="smartlock-summary-row">
-                <div class="smartlock-summary-chip" id="smartLockSummaryCount">
-                  0 sites armed
-                </div>
-                <div class="smartlock-summary-chip" id="smartLockSummaryBehavior">
-                  Intervention window ready
-                </div>
-                <div class="smartlock-summary-chip" id="smartLockSummaryEffect">
-                  Works on active distracting tabs
-                </div>
-              </div>
-
-              <div class="smartlock-flow">
-                <div class="smartlock-flow-step">
-                  <div class="smartlock-flow-kicker">Watch</div>
-                  <div class="smartlock-flow-text">Tracks the active site you stay on.</div>
-                </div>
-                <div class="smartlock-flow-step">
-                  <div class="smartlock-flow-kicker">Interrupt</div>
-                  <div class="smartlock-flow-text">Opens a friction popup when the timer is crossed.</div>
-                </div>
-                <div class="smartlock-flow-step">
-                  <div class="smartlock-flow-kicker">Recover</div>
-                  <div class="smartlock-flow-text">Pushes you back into a lock session or lets you continue consciously.</div>
-                </div>
               </div>
             </div>
-            <div class="smartlock-sites-head">
-              <span>Armed sites</span>
-              <span>Minutes</span>
+            <div class="smartlock-sites-toolbar">
+              <div class="smartlock-sites-head">
+                <span>Smart Lock sites</span>
+                <span>Minutes</span>
+              </div>
+              <button class="smartlock-add-btn" id="smartLockAddToggle" type="button">
+                Add more sites
+              </button>
             </div>
+            <div class="smartlock-upgrade-note" id="smartLockUpgradeNote" style="display: none">
+              Unlock precision blocking to add your own Smart Lock sites beyond the default pack.
+            </div>
+
+            <div class="smartlock-add-panel" id="smartLockAddPanel" style="display: none">
+              <div class="smartlock-add-copy">Add a site for Smart Lock.</div>
+              <div class="smartlock-add-form">
+                <input
+                  id="smartLockAddInput"
+                  class="smartlock-add-input"
+                  type="text"
+                  placeholder="Enter a website like netflix.com"
+                />
+                <button class="smartlock-add-submit" id="smartLockAddSubmit" type="button">
+                  Add
+                </button>
+              </div>
+              <div class="smartlock-add-error" id="smartLockAddError" style="display: none"></div>
+              <div class="smartlock-add-suggestions" id="smartLockAddSuggestions"></div>
+            </div>
+
             <div class="smartlock-sites-list" id="smartLockSitesList">
               <div class="empty-sites">
                 Turn Smart Lock on to configure sites.
@@ -561,9 +561,14 @@
           </div>
 
           <!-- CUSTOM SITES CARD -->
-          <div class="card">
+          <div class="card sites-custom-card">
             <div class="sites-section-header">
-              <div class="sites-section-title">Your custom blocks</div>
+              <div>
+                <div class="sites-section-title">Custom blocked sites</div>
+                <div class="sites-panel-sub">
+                  Search, browse, and add any extra website to your regular block list.
+                </div>
+              </div>
               <div class="sites-count-badge" id="customSitesCount">0 added</div>
             </div>
 
@@ -595,6 +600,7 @@
                   ✕
                 </button>
               </div>
+              <div class="site-search-error" id="siteSearchError" style="display: none"></div>
               <!-- AI suggestions appear here -->
               <div
                 id="siteSearchResults"
@@ -633,6 +639,23 @@
                 site.
               </div>
             </div>
+            <div class="sites-premium-overlay" id="sitesPremiumOverlay" style="display: none">
+              <div class="sites-premium-card">
+                <div class="sites-premium-kicker" id="sitesPremiumKicker">Precision Blocking</div>
+                <div class="sites-premium-title" id="sitesPremiumTitle">
+                  Unlock your personal distraction system
+                </div>
+                <div class="sites-premium-copy" id="sitesPremiumCopy">
+                  Block the exact sites that break your focus, then keep that setup synced across every DeepLock install.
+                </div>
+                <button class="sites-premium-btn" id="sitesPremiumBtn" type="button">
+                  Unlock custom blocking
+                </button>
+                <div class="sites-premium-note" id="sitesPremiumNote">
+                  Custom blocked sites and extra Smart Lock sites are part of DeepLock Pro.
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -662,6 +685,19 @@
             </div>
 
             <div id="profileSignedOut">
+              <div class="profile-plan-hero">
+                <div class="profile-plan-kicker">Account protection</div>
+                <div class="profile-plan-title">Sign in before you upgrade</div>
+                <div class="profile-plan-copy">
+                  DeepLock works best when your streak, history, and settings are tied to
+                  your account first. That keeps Pro access restorable across every Chrome install.
+                </div>
+                <div class="profile-plan-perks">
+                  <div class="profile-plan-perk">Sync streaks and history across devices</div>
+                  <div class="profile-plan-perk">Restore Pro without juggling license keys</div>
+                  <div class="profile-plan-perk">Keep your focus system safe after reinstall</div>
+                </div>
+              </div>
               <p class="profile-desc">
                 Connect Google to sync your streak and session history across
                 devices. Your data stays safe even if you reinstall Chrome.
@@ -706,6 +742,16 @@
                   Sign out
                 </button>
               </div>
+              <div class="profile-status-strip">
+                <div class="profile-status-pill" id="profilePlanBadge">Free plan</div>
+                <div class="profile-status-pill" id="profileSyncBadge">Cloud sync ready</div>
+                <div class="profile-status-pill" id="profileProtectionBadge">
+                  Progress not fully protected yet
+                </div>
+              </div>
+              <div class="profile-account-note" id="profileAccountNote">
+                Sign in complete. Upgrade when you want your full DeepLock system protected.
+              </div>
               <div class="sync-stats-row">
                 <div class="sync-stat">
                   <span class="sync-stat-val" id="cloudSessions">—</span
@@ -738,6 +784,46 @@
                 />
               </svg>
               Pro Subscription
+            </div>
+
+            <div id="subStateFree" style="display: none">
+              <div class="profile-plan-hero profile-plan-hero-upgrade">
+                <div class="profile-plan-kicker">DeepLock Pro</div>
+                <div class="profile-plan-title">Protect your momentum, not just today's session</div>
+                <div class="profile-plan-copy" id="profileUpgradeCopy">
+                  Pro turns DeepLock into your personal focus system: synced, restorable, and shaped around your real distractions.
+                </div>
+                <div class="profile-upgrade-grid">
+                  <div class="profile-upgrade-card">
+                    <div class="profile-upgrade-label">What unlocks</div>
+                    <div class="profile-upgrade-list">
+                      <div>30D and 1Y Overview trends</div>
+                      <div>30D / 90D / All History archive</div>
+                      <div>Custom blocked sites and extra Smart Lock sites</div>
+                      <div>Premium Insights and cross-device sync</div>
+                    </div>
+                  </div>
+                  <div class="profile-upgrade-card">
+                    <div class="profile-upgrade-label">Why it matters</div>
+                    <div class="profile-upgrade-list" id="profileLockedValueList">
+                      <div>Your long-range progress is still locked</div>
+                      <div>Your custom distraction system is not protected yet</div>
+                      <div>Your premium setup is not restorable across installs</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="sub-actions-row profile-upgrade-actions">
+                  <a class="sub-manage-link" id="profileSeeIncludedBtn" href="#tab-insights">
+                    See what's included ->
+                  </a>
+                  <button class="retention-keep-btn" id="profileUpgradeBtn">
+                    Unlock DeepLock Pro
+                  </button>
+                </div>
+                <div class="profile-plan-note" id="profileUpgradeNote">
+                  Sign in first, then upgrade through Lemon Squeezy. Legacy license restore stays available if you bought before.
+                </div>
+              </div>
             </div>
 
             <!-- DEFAULT: Active state -->
@@ -960,149 +1046,147 @@
 
         <!-- SCHEDULE -->
         <div id="tab-schedule" class="tab-content">
-          <div class="page-header">
-            <div>
-              <h1 class="page-title">Schedule</h1>
-              <p class="page-sub">
-                Auto-lock at a specific time — no willpower needed
-              </p>
-            </div>
-          </div>
-
-          <!-- CREATE SCHEDULE CARD -->
-          <div class="card sched-create-card" style="margin-bottom: 20px">
-            <div class="sched-form-title">New scheduled session</div>
-
-            <div class="sched-form-grid">
-              <!-- Intent -->
-              <div class="sched-field full-width">
-                <label class="sched-label">What will you work on?</label>
-                <input
-                  id="schedIntent"
-                  class="sched-input"
-                  placeholder="e.g. Study for exam, finish project..."
-                  maxlength="80"
-                />
-              </div>
-
-              <!-- Date -->
-              <div class="sched-field">
-                <label class="sched-label">Date</label>
-                <input id="schedDate" type="date" class="sched-input" />
-              </div>
-
-              <!-- Time -->
-              <div class="sched-field">
-                <label class="sched-label">Start time</label>
-                <input id="schedTime" type="time" class="sched-input" />
-              </div>
-
-              <!-- Duration -->
-              <div class="sched-field">
-                <label class="sched-label">Duration</label>
-                <select id="schedDuration" class="sched-input sched-select">
-                  <option value="25">25 minutes</option>
-                  <option value="45">45 minutes</option>
-                  <option value="60" selected>60 minutes</option>
-                  <option value="90">90 minutes</option>
-                  <option value="120">2 hours</option>
-                  <option value="180">3 hours</option>
-                </select>
-              </div>
-
-              <!-- Repeat -->
-              <div class="sched-field">
-                <label class="sched-label">Repeat</label>
-                <select id="schedRepeat" class="sched-input sched-select">
-                  <option value="none">One time</option>
-                  <option value="daily">Every day</option>
-                  <option value="weekdays">Weekdays only</option>
-                  <option value="weekends">Weekends only</option>
-                  <option value="weekly">Weekly</option>
-                </select>
+          <div class="schedule-page">
+            <div class="schedule-hero-card">
+              <div class="schedule-hero-copy">
+                <span class="schedule-kicker">Schedule</span>
+                <h1 class="schedule-title">Put focus on the calendar before distraction starts.</h1>
+                <p class="schedule-sub">
+                  Plan sessions once, let DeepLock lock on time, and keep your workday feeling deliberate instead of reactive.
+                </p>
               </div>
             </div>
 
-            <div class="sched-form-footer">
-              <div class="sched-preview" id="schedPreview">—</div>
-              <button class="sched-create-btn" id="schedCreateBtn">
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 13 13"
-                  fill="currentColor"
-                >
-                  <path
-                    d="M6.5 1v11M1 6.5h11"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linecap="round"
+            <div class="card sched-create-card">
+              <div class="sched-form-title">New scheduled session</div>
+
+              <div class="sched-form-grid">
+                <div class="sched-field full-width">
+                  <label class="sched-label">What will you work on?</label>
+                  <input
+                    id="schedIntent"
+                    class="sched-input"
+                    placeholder="e.g. Study for exam, finish project..."
+                    maxlength="80"
                   />
-                </svg>
-                Schedule Session
-              </button>
+                </div>
+
+                <div class="sched-field">
+                  <label class="sched-label">Date</label>
+                  <input id="schedDate" type="date" class="sched-input" />
+                </div>
+
+                <div class="sched-field">
+                  <label class="sched-label">Start time</label>
+                  <input id="schedTime" type="time" class="sched-input" />
+                </div>
+
+                <div class="sched-field">
+                  <label class="sched-label">Duration</label>
+                  <select id="schedDuration" class="sched-input sched-select">
+                    <option value="25">25 minutes</option>
+                    <option value="45">45 minutes</option>
+                    <option value="60" selected>60 minutes</option>
+                    <option value="90">90 minutes</option>
+                    <option value="120">2 hours</option>
+                    <option value="180">3 hours</option>
+                  </select>
+                </div>
+
+                <div class="sched-field">
+                  <label class="sched-label">Repeat</label>
+                  <select id="schedRepeat" class="sched-input sched-select">
+                    <option value="none">One time</option>
+                    <option value="daily">Every day</option>
+                    <option value="weekdays">Weekdays only</option>
+                    <option value="weekends">Weekends only</option>
+                    <option value="weekly">Weekly</option>
+                  </select>
+                </div>
+              </div>
+              <div class="sched-premium-note" id="schedPremiumNote">
+                Free includes one upcoming one-time schedule. Pro unlocks repeats, custom site sets, multiple upcoming schedules, and sync.
+              </div>
+
+              <div class="sched-sites-card">
+                <div class="sched-sites-head">
+                  <div>
+                    <div class="sched-sites-title">Blocked Sites</div>
+                    <div class="sched-sites-sub">
+                      Choose whether this schedule uses your live block list or its own saved site snapshot.
+                    </div>
+                  </div>
+                  <div class="sched-sites-pill" id="schedSitesPill">Using current list</div>
+                </div>
+
+                <div class="sched-site-mode-group" id="schedSiteModeGroup">
+                  <label class="sched-site-mode-option">
+                    <input type="radio" name="schedSiteMode" value="current" checked />
+                    <span class="sched-site-mode-copy">
+                      <span class="sched-site-mode-label">Use my current blocked list</span>
+                      <span class="sched-site-mode-note">Best default. It always uses your latest Blocked Sites setup.</span>
+                    </span>
+                  </label>
+                  <label class="sched-site-mode-option">
+                    <input type="radio" name="schedSiteMode" value="custom" />
+                    <span class="sched-site-mode-copy">
+                      <span class="sched-site-mode-label">Choose sites for this schedule <span class="sched-premium-chip">Pro</span></span>
+                      <span class="sched-site-mode-note">Save a dedicated distraction set just for this routine.</span>
+                    </span>
+                  </label>
+                </div>
+
+                <div class="sched-sites-picker" id="schedSitesPicker" style="display: none">
+                  <div class="sched-sites-picker-top">
+                    <div class="sched-sites-picker-copy">Primary distractions</div>
+                    <button class="sched-sites-more-btn" id="schedSitesMoreBtn" type="button">More sites</button>
+                  </div>
+                  <div class="sched-sites-grid" id="schedSitesGrid"></div>
+                  <div class="sched-sites-note" id="schedSitesNote">
+                    DeepLock will save this exact set and use it when the schedule fires later.
+                  </div>
+                </div>
+              </div>
+
+              <div class="sched-form-footer">
+                <div class="sched-preview" id="schedPreview">-</div>
+                <button class="sched-create-btn" id="schedCreateBtn">
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 13 13"
+                    fill="currentColor"
+                  >
+                    <path
+                      d="M6.5 1v11M1 6.5h11"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                  Schedule Session
+                </button>
+              </div>
+              <div class="sched-feedback" id="schedFeedback"></div>
             </div>
-            <div class="sched-feedback" id="schedFeedback"></div>
-          </div>
 
-          <!-- TEST BUTTON (remove before launch) -->
-          <div style="margin-bottom: 10px">
-            <button
-              id="schedTestBtn"
-              style="
-                background: #1c1c1c;
-                border: 1px solid #333;
-                color: #888;
-                border-radius: 7px;
-                padding: 7px 14px;
-                font-size: 11px;
-                cursor: pointer;
-                font-family: monospace;
-              "
-            >
-              ⚡ Test: fire alarm in 65 seconds
-            </button>
-            <span
-              id="schedTestStatus"
-              style="font-size: 11px; color: #555; margin-left: 10px"
-            ></span>
-          </div>
-
-          <!-- DEBUG PANEL -->
-          <div
-            class="sched-debug-panel"
-            id="schedDebugPanel"
-            style="display: none"
-          >
-            <div class="sched-debug-title">
-              &#x1F50D; Debug Log
-              <button
-                id="schedDebugClose"
-                style="
-                  float: right;
-                  background: none;
-                  border: none;
-                  color: inherit;
-                  cursor: pointer;
-                "
-              >
-                &#x2715;
-              </button>
-            </div>
-            <div id="schedDebugLog" class="sched-debug-log"></div>
-          </div>
-
-          <!-- UPCOMING SCHEDULES -->
-          <div class="sched-list-header">
-            <span class="sched-list-title">Upcoming sessions</span>
-            <span class="sched-count" id="schedCount">0 scheduled</span>
-          </div>
-          <div id="schedList" class="sched-list">
-            <div class="sched-empty">
-              <div class="sched-empty-icon">📅</div>
-              <div class="sched-empty-text">No sessions scheduled yet.</div>
-              <div class="sched-empty-sub">
-                Set one up above — DeepLock will lock automatically.
+            <div class="card schedule-list-card">
+              <div class="sched-list-header">
+                <div>
+                  <div class="sched-list-title">Upcoming sessions</div>
+                  <div class="sched-list-sub">Everything planned next, in one clean timeline.</div>
+                  <div class="sched-upgrade-hint" id="schedUpgradeHint"></div>
+                </div>
+                <span class="sched-count" id="schedCount">0 scheduled</span>
+              </div>
+              <div id="schedList" class="sched-list">
+                <div class="sched-empty">
+                  <div class="sched-empty-icon">[ ]</div>
+                  <div class="sched-empty-text">No sessions scheduled yet.</div>
+                  <div class="sched-empty-sub">
+                    Build one routine above and DeepLock will handle the timing.
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1116,7 +1200,15 @@
                 See where your time actually goes across the web
               </p>
             </div>
-            <div class="sync-source-badge" id="insightsRange">TODAY</div>
+            <div class="insights-toolbar">
+              <div class="insights-range-tabs" id="insightsRangeTabs">
+                <button class="insights-range-tab active" data-range="today" type="button">Today</button>
+                <button class="insights-range-tab" data-range="7d" type="button">7D</button>
+                <button class="insights-range-tab" data-range="30d" type="button">30D</button>
+                <button class="insights-range-tab" data-range="1y" type="button">1Y</button>
+              </div>
+              <div class="sync-source-badge" id="insightsRange">TODAY</div>
+            </div>
           </div>
 
           <div id="insightsLock" class="insights-lock" style="display: none">
@@ -1138,83 +1230,125 @@
           </div>
 
           <div id="insightsContent">
-            <div class="card insights-chart-card">
-              <div class="card-header">
-                <div class="card-title">Usage Trend</div>
+            <div class="card insights-summary-card">
+              <div class="insights-summary-top">
+                <div>
+                  <div class="card-title">Focus Snapshot</div>
+                  <div class="page-sub" id="insightsSummarySub">
+                    Today at a glance
+                  </div>
+                </div>
                 <button class="insights-share-btn" id="insightsShareBtn">
                   Share your week
                 </button>
               </div>
-              <div class="page-sub" style="margin-bottom: 10px">
-                Last 7 days of tracked browsing
-              </div>
-              <div class="insights-chart-wrap">
-                <canvas class="insights-chart-canvas" id="insightsTrendChart"></canvas>
-              </div>
-            </div>
 
-            <div class="cards-row insights-hero-row">
-              <div class="card insights-focus-card">
-                <div class="card-title">Focus Score</div>
-                <div class="insights-score-wrap">
-                  <div class="insights-score-num" id="insightsFocusScore">0</div>
-                <div class="insights-score-label">Focus Score</div>
-              </div>
-              <div class="insights-quality" id="insightsQualityLabel">
-                Great day
-              </div>
-              <div class="insights-score-sub" id="insightsScoreSub">
-                Calculated from your focus vs distracting time.
-              </div>
-            </div>
+              <div class="insights-summary-grid">
+                <div class="insights-summary-stat score">
+                  <div class="insights-summary-label">Focus Score</div>
+                  <div class="insights-score-wrap">
+                    <div class="insights-score-num" id="insightsFocusScore">0</div>
+                    <div class="insights-score-label">Out of 100</div>
+                  </div>
+                  <div class="insights-quality" id="insightsQualityLabel">
+                    Great day
+                  </div>
+                  <div class="insights-score-sub" id="insightsScoreSub">
+                    Calculated from your focus vs distracting time.
+                  </div>
+                </div>
 
-              <div class="card insights-message-card">
-                <div class="card-title">Daily Insight</div>
+                <div class="insights-summary-stat">
+                  <div class="insights-summary-label">Tracked Time</div>
+                  <div class="insights-summary-value" id="insightsTotalTime">0m total</div>
+                  <div class="insights-summary-note">Total browsing captured</div>
+                </div>
+
+                <div class="insights-summary-stat">
+                  <div class="insights-summary-label">Focus Time</div>
+                  <div class="insights-summary-value" id="insightsFocusTime">0m</div>
+                  <div class="insights-summary-note">Productive browsing</div>
+                </div>
+
+                <div class="insights-summary-stat distract">
+                  <div class="insights-summary-label">Distracting Time</div>
+                  <div class="insights-summary-value" id="insightsDistractingTime">0m</div>
+                  <div class="insights-summary-note">Time on distracting sites</div>
+                </div>
+              </div>
+
+              <div class="insights-message-strip">
+                <div class="insights-message-kicker">Insight</div>
                 <div class="insights-message" id="insightsMessage">
                   We'll surface your biggest time sink here.
                 </div>
               </div>
             </div>
 
-            <div class="card insights-breakdown-card">
+            <div class="card insights-chart-card">
               <div class="card-header">
-                <div class="card-title">Usage Breakdown</div>
-                <div class="insights-total" id="insightsTotalTime">0m total</div>
-              </div>
-              <div class="insights-breakdown-stats">
-                <div class="insights-breakdown-stat focus">
-                  <span class="insights-breakdown-dot"></span>
-                  <span class="insights-breakdown-name">Focus Time</span>
-                  <span class="insights-breakdown-val" id="insightsFocusTime">0m</span>
-                </div>
-                <div class="insights-breakdown-stat distract">
-                  <span class="insights-breakdown-dot"></span>
-                  <span class="insights-breakdown-name">Distracting Time</span>
-                  <span class="insights-breakdown-val" id="insightsDistractingTime">0m</span>
+                <div>
+                  <div class="card-title">Tracked Trend</div>
+                  <div class="page-sub" id="insightsChartSubtitle">
+                    Last 7 days of tracked browsing
+                  </div>
                 </div>
               </div>
-              <div class="insights-splitbar">
-                <div class="insights-splitbar-focus" id="insightsFocusBar"></div>
-                <div class="insights-splitbar-distract" id="insightsDistractBar"></div>
+              <div class="insights-chart-wrap">
+                <canvas class="insights-chart-canvas" id="insightsTrendChart"></canvas>
               </div>
-              <div class="insights-patterns">
-                <div class="insights-pattern-chip" id="insightsPeakHour">
-                  You focus best at --
-                </div>
-                <div class="insights-pattern-chip" id="insightsBestEnergy">
-                  Energy pattern loading
+              <div class="insights-premium-overlay" id="insightsPremiumOverlay" style="display: none">
+                <div class="insights-premium-card">
+                  <div class="insights-premium-kicker" id="insightsPremiumKicker">Pro Insights</div>
+                  <div class="insights-premium-title" id="insightsPremiumTitle">
+                    Unlock your long-range focus pattern
+                  </div>
+                  <div class="insights-premium-copy" id="insightsPremiumCopy">
+                    See whether your distractions are drifting, tightening, or quietly stealing more of your life over time.
+                  </div>
+                  <button class="insights-premium-btn" id="insightsPremiumBtn" type="button">
+                    Unlock full pattern view
+                  </button>
+                  <div class="insights-premium-note" id="insightsPremiumNote">
+                    30D and 1Y Insights are part of DeepLock Pro.
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div class="card insights-sites-card">
-              <div class="card-header">
-                <div class="card-title">Top Sites Today</div>
-                <div class="page-sub">Top 5 by time spent</div>
+            <div class="insights-detail-grid">
+              <div class="card insights-breakdown-card">
+                <div class="card-header">
+                  <div>
+                    <div class="card-title">Usage Breakdown</div>
+                    <div class="page-sub">Focus vs distraction for this range</div>
+                  </div>
+                </div>
+                <div class="insights-splitbar">
+                  <div class="insights-splitbar-focus" id="insightsFocusBar"></div>
+                  <div class="insights-splitbar-distract" id="insightsDistractBar"></div>
+                </div>
+                <div class="insights-patterns">
+                  <div class="insights-pattern-chip" id="insightsPeakHour">
+                    You focus best at --
+                  </div>
+                  <div class="insights-pattern-chip" id="insightsBestEnergy">
+                    Energy pattern loading
+                  </div>
+                </div>
               </div>
-              <div class="insights-sites-list" id="insightsTopSites">
-                <div class="insights-empty">
-                  Browse a little and your top sites will appear here.
+
+              <div class="card insights-sites-card">
+                <div class="card-header">
+                  <div>
+                    <div class="card-title" id="insightsSitesTitle">Top Sites</div>
+                    <div class="page-sub" id="insightsSitesSub">Top 5 by time spent</div>
+                  </div>
+                </div>
+                <div class="insights-sites-list" id="insightsTopSites">
+                  <div class="insights-empty">
+                    Browse a little and your top sites will appear here.
+                  </div>
                 </div>
               </div>
             </div>
@@ -1300,3 +1434,4 @@
     <script src="dashboard.js"></script>
   </body>
 </html>
+

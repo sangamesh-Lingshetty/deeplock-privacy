@@ -55,6 +55,14 @@
         margin-bottom: 24px;
       }
 
+      .strict-banner {
+        display: none;
+        margin: -6px 0 20px;
+        font: 700 11px "Space Mono", monospace;
+        letter-spacing: 1.4px;
+        color: #fca5a5;
+      }
+
       .domain-pill {
         display: inline-block;
         margin-bottom: 24px;
@@ -88,6 +96,11 @@
         color: #e2e8f0;
         border: 1px solid rgba(255, 255, 255, 0.08);
       }
+
+      .secondary[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
     </style>
   </head>
   <body>
@@ -98,6 +111,7 @@
       <div class="message" id="killMessage">
         You have spent 10 minutes here. Decide on purpose: continue, or lock in.
       </div>
+      <div class="strict-banner" id="strictBanner">STRICT MODE ENABLED · CONTINUE BLOCKED</div>
       <div class="actions">
         <button class="primary" id="lockNowBtn">Lock it</button>
         <button class="secondary" id="continueBtn">Continue</button>

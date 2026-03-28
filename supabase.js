@@ -179,24 +179,100 @@ async function upsertProfile(userId, email, accessToken) {
 // SAVE SESSION
 // Called after every completed focus session
 // ================================
-async function saveSession({ date, duration, intent, completed }) {
+async function saveSession({
+  date,
+  duration,
+  intent,
+  completed,
+  blockedAttempts,
+  energyLevel,
+  source,
+  startHour,
+  scheduledSessionId,
+  blockedDomainsSnapshot,
+}) {
   const session = await getSession();
   if (!session) return false; // not signed in, skip silently
+
+  const body = {
+    user_id: session.userId,
+    date,
+    duration,
+    intent: intent || "",
+    completed: completed ?? true,
+    blocked_attempts: Number(blockedAttempts) || 0,
+    energy_level:
+      Number.isFinite(energyLevel) && energyLevel > 0 ? Number(energyLevel) : null,
+    source: source || "manual",
+    start_hour:
+      Number.isFinite(startHour) && startHour >= 0 ? Number(startHour) : null,
+    scheduled_session_id: scheduledSessionId || null,
+    blocked_domains_snapshot: Array.isArray(blockedDomainsSnapshot)
+      ? blockedDomainsSnapshot
+      : [],
+  };
 
   const res = await sbFetch(
     "/rest/v1/chomeExstensionSessions",
     "POST",
-    {
-      user_id: session.userId,
-      date,
-      duration,
-      intent: intent || "",
-      completed: completed ?? true,
-    },
+    body,
     session.accessToken,
   );
 
+  if (!res.ok) {
+    const err = await res.text().catch(() => "unknown");
+    console.error("[DeepLock] saveSession FAILED:", res.status, err, body);
+    return false;
+  }
+
+  return true;
+}
+
+async function upsertSettingsPatch(patch) {
+  const session = await getSession();
+  if (!session) return false;
+
+  const res = await sbFetch(
+    "/rest/v1/chomeExstensionSettings",
+    "POST",
+    {
+      user_id: session.userId,
+      ...patch,
+      updated_at: new Date().toISOString(),
+    },
+    session.accessToken,
+    { prefer: "resolution=merge-duplicates" },
+  );
+
   return res.ok;
+}
+
+function getSubscriptionStateFromSettings(settings) {
+  const plan = String(settings?.plan || settings?.subscription_plan || "").toLowerCase();
+  const status = String(settings?.subscription_status || "").toLowerCase();
+  const isPro =
+    settings?.is_pro === true ||
+    ((plan === "pro" || plan === "premium") &&
+      ["active", "trialing", "grace_period", "paused"].includes(status));
+
+  return {
+    isPro,
+    plan: plan || "free",
+    status: status || "inactive",
+    source: settings?.subscription_source || "",
+    renewsAt: settings?.subscription_renews_at || null,
+    customerId: settings?.lemonsqueezy_customer_id || null,
+    subscriptionId: settings?.lemonsqueezy_subscription_id || null,
+  };
+}
+
+async function saveLegacyLicenseEntitlement() {
+  return upsertSettingsPatch({
+    plan: "pro",
+    subscription_status: "active",
+    subscription_source: "legacy_license",
+    is_pro: true,
+  });
 }
 
 // ================================
@@ -210,40 +286,12 @@ async function syncStats({
   totalSessions,
   totalFocusMinutes,
 }) {
-  const session = await getSession();
-  if (!session) return false;
-
-  // First get existing settings so we don't overwrite custom domains
-  const existingRes = await sbFetch(
-    `/rest/v1/chomeExstensionSettings?user_id=eq.${session.userId}&select=custom_blocked_domains`,
-    "GET",
-    null,
-    session.accessToken,
-  ).catch(() => null);
-
-  let existingDomains = [];
-  if (existingRes?.ok) {
-    const rows = await existingRes.json();
-    existingDomains = rows[0]?.custom_blocked_domains || [];
-  }
-
-  const res = await sbFetch(
-    "/rest/v1/chomeExstensionSettings",
-    "POST",
-    {
-      user_id: session.userId,
-      custom_blocked_domains: existingDomains, // preserve existing
-      current_streak: currentStreak,
-      longest_streak: longestStreak,
-      total_sessions: totalSessions,
-      total_focus_minutes: totalFocusMinutes,
-      updated_at: new Date().toISOString(),
-    },
-    session.accessToken,
-    { prefer: "resolution=merge-duplicates" },
-  );
-
-  return res.ok;
+  return upsertSettingsPatch({
+    current_streak: currentStreak,
+    longest_streak: longestStreak,
+    total_sessions: totalSessions,
+    total_focus_minutes: totalFocusMinutes,
+  });
 }
 
 // ================================
@@ -251,22 +299,23 @@ async function syncStats({
 // Called when Pro user changes their custom sites
 // ================================
 async function saveCustomDomains(domains) {
-  const session = await getSession();
-  if (!session) return false;
+  return upsertSettingsPatch({
+    custom_blocked_domains: domains,
+  });
+}
 
-  const res = await sbFetch(
-    "/rest/v1/chomeExstensionSettings",
-    "POST",
-    {
-      user_id: session.userId,
-      custom_blocked_domains: domains,
-      updated_at: new Date().toISOString(),
-    },
-    session.accessToken,
-    { prefer: "resolution=merge-duplicates" },
-  );
+async function saveSmartLockConfig({ enabled, minutes, sites }) {
+  return upsertSettingsPatch({
+    auto_kill_enabled: !!enabled,
+    auto_kill_minutes: Number(minutes) || 10,
+    auto_kill_sites: sites || {},
+  });
+}
 
-  return res.ok;
+async function saveDashboardTheme(theme) {
+  return upsertSettingsPatch({
+    dashboard_theme: theme === "light" ? "light" : "dark",
+  });
 }
 
 // ================================
@@ -311,6 +360,122 @@ async function getSessionHistory(days = 90) {
   return await res.json();
 }
 
+async function saveDailyStats({
+  date,
+  focusMinutes,
+  sessionsCount,
+  blockedAttempts,
+  completedSessions,
+  topFocusHour,
+}) {
+  const session = await getSession();
+  if (!session) return false;
+
+  const body = {
+    user_id: session.userId,
+    date,
+    focus_minutes: Number(focusMinutes) || 0,
+    sessions_count: Number(sessionsCount) || 0,
+    blocked_attempts: Number(blockedAttempts) || 0,
+    completed_sessions: Number(completedSessions) || 0,
+    top_focus_hour:
+      Number.isFinite(topFocusHour) && topFocusHour >= 0 ? topFocusHour : null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const res = await sbFetch(
+    "/rest/v1/chomeExstensionDailyStats",
+    "POST",
+    body,
+    session.accessToken,
+    { prefer: "resolution=merge-duplicates" },
+  );
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => "unknown");
+    console.error("[DeepLock] saveDailyStats FAILED:", res.status, err, body);
+    return false;
+  }
+
+  return true;
+}
+
+async function getDailyStats(days = 365) {
+  const session = await getSession();
+  if (!session) return [];
+
+  const since = new Date();
+  since.setDate(since.getDate() - Math.max(0, days - 1));
+  const sinceStr = since.toISOString().split("T")[0];
+
+  const res = await sbFetch(
+    `/rest/v1/chomeExstensionDailyStats?user_id=eq.${session.userId}&date=gte.${sinceStr}&order=date.asc&select=*`,
+    "GET",
+    null,
+    session.accessToken,
+  );
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => "unknown");
+    console.error("[DeepLock] getDailyStats FAILED:", res.status, err);
+    return [];
+  }
+  return await res.json();
+}
+
+async function saveSiteUsageDay({ date, sites, distractingMinutes, focusScore }) {
+  const session = await getSession();
+  if (!session) return false;
+
+  const body = {
+    user_id: session.userId,
+    date,
+    sites: sites || {},
+    distracting_minutes: Number(distractingMinutes) || 0,
+    focus_score: Number.isFinite(focusScore) ? focusScore : null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const res = await sbFetch(
+    "/rest/v1/chomeExstensionSiteUsage",
+    "POST",
+    body,
+    session.accessToken,
+    { prefer: "resolution=merge-duplicates" },
+  );
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => "unknown");
+    console.error("[DeepLock] saveSiteUsageDay FAILED:", res.status, err, body);
+    return false;
+  }
+
+  return true;
+}
+
+async function getSiteUsage(days = 365) {
+  const session = await getSession();
+  if (!session) return [];
+
+  const since = new Date();
+  since.setDate(since.getDate() - Math.max(0, days - 1));
+  const sinceStr = since.toISOString().split("T")[0];
+
+  const res = await sbFetch(
+    `/rest/v1/chomeExstensionSiteUsage?user_id=eq.${session.userId}&date=gte.${sinceStr}&order=date.asc&select=*`,
+    "GET",
+    null,
+    session.accessToken,
+  );
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => "unknown");
+    console.error("[DeepLock] getSiteUsage FAILED:", res.status, err);
+    return [];
+  }
+  return await res.json();
+}
+
 // ================================
 // INTERNAL FETCH HELPER
 // ================================
@@ -340,7 +505,8 @@ async function sbFetch(path, method, body, accessToken, extraHeaders = {}) {
 // ================================
 // SCHEDULED SESSIONS
 // Table: chomeExstensionSchedules
-// Columns: id, user_id, intent, scheduled_at (ISO), duration, repeat, active
+// Columns: id, user_id, intent, scheduled_at (ISO), duration, repeat, active,
+// site_mode, blocked_domains_snapshot
 // ================================
 async function saveSchedule({
   id,
@@ -348,6 +514,8 @@ async function saveSchedule({
   scheduledAt,
   duration,
   repeat,
+  siteMode,
+  blockedDomainsSnapshot,
   active,
 }) {
   const session = await getSession();
@@ -365,6 +533,10 @@ async function saveSchedule({
     scheduled_at: scheduledAt, // snake_case — matches DB column
     duration,
     repeat: repeat || "none",
+    site_mode: siteMode || "current",
+    blocked_domains_snapshot: Array.isArray(blockedDomainsSnapshot)
+      ? blockedDomainsSnapshot
+      : [],
     active: active !== false,
   };
 

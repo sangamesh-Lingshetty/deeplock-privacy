@@ -5,7 +5,14 @@
     document.getElementById(OVERLAY_ID)?.remove();
   }
 
-  function createOverlay(domain, minutes) {
+  function resolveStrictMode(fallback, callback) {
+    chrome.runtime.sendMessage({ action: "consumeAutoKillIntervention" }, (res) => {
+      const strictMode = res?.data?.strictMode;
+      callback(typeof strictMode === "boolean" ? strictMode : !!fallback);
+    });
+  }
+
+  function createOverlay(domain, minutes, strictMode) {
     removeOverlay();
 
     const host = document.createElement("div");
@@ -43,15 +50,28 @@
         ${domain}
       </div>
       <div style="font-size:14px; line-height:1.8; color:#cbd5e1; margin-bottom:22px;">
-        DeepLock noticed ${minutes} minute${minutes === 1 ? "" : "s"} on ${domain}. Continue if you mean it, or lock back in now.
+        ${
+          strictMode
+            ? `DeepLock noticed ${minutes} minute${minutes === 1 ? "" : "s"} on ${domain}. Strict Mode is enabled, so you cannot continue from here.`
+            : `DeepLock noticed ${minutes} minute${minutes === 1 ? "" : "s"} on ${domain}. Continue if you mean it, or lock back in now.`
+        }
       </div>
+      ${
+        strictMode
+          ? `<div style="margin:-4px 0 18px; font:700 11px 'Space Mono', monospace; letter-spacing:1.2px; color:#fca5a5;">STRICT MODE ENABLED - CONTINUE BLOCKED</div>`
+          : ""
+      }
       <div style="display:grid; gap:12px;">
         <button id="deeplock-lock-now" style="border:none; border-radius:14px; padding:14px 16px; font:700 14px 'DM Sans', sans-serif; cursor:pointer; background:#ef4444; color:#fff;">
           Lock it
         </button>
-        <button id="deeplock-continue" style="border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:14px 16px; font:700 14px 'DM Sans', sans-serif; cursor:pointer; background:#161c28; color:#e2e8f0;">
+        ${
+          strictMode
+            ? ""
+            : `<button id="deeplock-continue" style="border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:14px 16px; font:700 14px 'DM Sans', sans-serif; cursor:pointer; background:#161c28; color:#e2e8f0;">
           Continue
-        </button>
+        </button>`
+        }
       </div>
     `;
 
@@ -65,16 +85,22 @@
     });
 
     card.querySelector("#deeplock-continue")?.addEventListener("click", () => {
-      chrome.runtime.sendMessage({ action: "autoKillContinue" }, () => {
-        removeOverlay();
+      chrome.runtime.sendMessage({ action: "autoKillContinue" }, (res) => {
+        if (res?.ok) removeOverlay();
       });
     });
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.action === "showAutoKillOverlay") {
-      createOverlay(msg.domain || location.hostname, Number(msg.minutes) || 10);
-      sendResponse({ ok: true });
+      resolveStrictMode(!!msg.strictMode, (strictMode) => {
+        createOverlay(
+          msg.domain || location.hostname,
+          Number(msg.minutes) || 10,
+          strictMode,
+        );
+        sendResponse({ ok: true });
+      });
       return true;
     }
 

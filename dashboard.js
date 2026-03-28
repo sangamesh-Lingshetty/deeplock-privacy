@@ -9,10 +9,10 @@
 // ================================
 // Flag set to true only after server confirms Pro — dashboard init waits for this
 window.__deepLockAllowed = false;
-window.TEMP_BYPASS_PRO_FOR_TESTING = true;
+const TEMP_DASHBOARD_BOOTSTRAP = true;
 
 (function proGate() {
-  if (window.TEMP_BYPASS_PRO_FOR_TESTING) {
+  if (TEMP_DASHBOARD_BOOTSTRAP) {
     window.__deepLockAllowed = true;
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", initDashboard);
@@ -120,12 +120,17 @@ const QUOTES = [
 ];
 
 const OVERVIEW_DAILY_GOAL_MINUTES = 120;
-let currentOverviewRange = "7d";
+let currentOverviewRange = "today";
+let currentInsightsRange = "today";
+let currentHistoryRange = "7d";
 let overviewChart = null;
+let overviewBalanceChart = null;
 let insightsTrendChart = null;
 let insightsLifeChart = null;
 let overviewSnapshot = null;
+let historySnapshot = { source: "LOCAL", entries: [] };
 let currentOverviewQuoteIndex = 0;
+let activeSessionInterval = null;
 
 const DEFAULT_SITES = [
   { name: "Instagram", filter: "||instagram.com^" },
@@ -164,7 +169,7 @@ const DISTRACTING_DOMAINS = [
 
 const SMART_LOCK_PRESET_SITES = [
   { name: "YouTube", domain: "youtube.com" },
-  { name: "X", domain: "x.com" },
+  { name: "X / Twitter", domain: "x.com" },
   { name: "Twitter", domain: "twitter.com" },
   { name: "Instagram", domain: "instagram.com" },
   { name: "Reddit", domain: "reddit.com" },
@@ -177,16 +182,39 @@ const SMART_LOCK_PRESET_SITES = [
 const SMART_LOCK_DEFAULT_ENABLED = new Set([
   "youtube.com",
   "x.com",
-  "twitter.com",
   "instagram.com",
   "reddit.com",
   "facebook.com",
-  "tiktok.com",
 ]);
+const SMART_LOCK_PRIMARY_DOMAINS = new Set([
+  "youtube.com",
+  "x.com",
+  "instagram.com",
+  "reddit.com",
+  "facebook.com",
+]);
+const QUICK_BLOCK_SITES = [
+  { name: "YouTube", domain: "youtube.com", filters: ["||youtube.com^"] },
+  { name: "Instagram", domain: "instagram.com", filters: ["||instagram.com^"] },
+  { name: "X / Twitter", domain: "x.com", filters: ["||x.com^", "||twitter.com^"] },
+  { name: "Reddit", domain: "reddit.com", filters: ["||reddit.com^"] },
+  { name: "Facebook", domain: "facebook.com", filters: ["||facebook.com^"] },
+];
+const QUICK_BLOCK_KEY = "popupQuickBlockedDomains";
+const SCHEDULE_SITE_MODE_KEY = "scheduleDraftSiteMode";
+const SCHEDULE_SITE_DRAFT_KEY = "scheduleDraftBlockedDomains";
 
 const DASHBOARD_THEME_KEY = "dashboardTheme";
+const PREMIUM_OVERVIEW_RANGES = new Set(["30d", "1y"]);
+const PREMIUM_HISTORY_RANGES = new Set(["30d", "90d", "all"]);
+const PREMIUM_INSIGHTS_RANGES = new Set(["30d", "1y"]);
+const LS_CHECKOUT_URL =
+  "https://deeplockproversion.lemonsqueezy.com/checkout/buy/7b55508e-ee4c-4a87-98ff-c7ddde0ba69a";
+const TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING = false;
 
 let customSites = [];
+let smartLockSitesSnapshot = [];
+let sitesAccessState = { isPro: false, isSignedIn: false };
 
 function el(id) {
   return document.getElementById(id);
@@ -194,6 +222,237 @@ function el(id) {
 function setText(id, val) {
   const e = el(id);
   if (e) e.textContent = val;
+}
+
+function isOverviewRangePremiumLocked(rangeKey, state = {}) {
+  const isPro = !!state.isPro;
+  return PREMIUM_OVERVIEW_RANGES.has(rangeKey) && !isPro;
+}
+
+function isHistoryRangePremiumLocked(rangeKey, state = {}) {
+  const isPro = !!state.isPro;
+  return PREMIUM_HISTORY_RANGES.has(rangeKey) && !isPro;
+}
+
+function isInsightsRangePremiumLocked(rangeKey, state = {}) {
+  const isPro = !!state.isPro;
+  return PREMIUM_INSIGHTS_RANGES.has(rangeKey) && !isPro;
+}
+
+function getOverviewAccessState(callback) {
+  chrome.storage.local.get(["isPro", "sbSignedIn"], (data) => {
+    callback({
+      isPro: !!data.isPro,
+      isSignedIn: !!data.sbSignedIn,
+    });
+  });
+}
+
+function updateOverviewPremiumState() {
+  getOverviewAccessState((state) => {
+    const locked = isOverviewRangePremiumLocked(currentOverviewRange, state);
+    const grid = document.querySelector(".overview-main-grid");
+    const overlay = el("overviewPremiumOverlay");
+    const btn = el("overviewPremiumBtn");
+
+    if (grid) grid.classList.toggle("is-premium-locked", locked);
+    if (overlay) overlay.style.display = locked ? "grid" : "none";
+    if (!locked) return;
+
+    setText(
+      "overviewPremiumKicker",
+      currentOverviewRange === "1y" ? "Yearly Focus" : "30-Day Focus",
+    );
+    setText(
+      "overviewPremiumTitle",
+      currentOverviewRange === "1y"
+        ? "Unlock your yearly focus arc"
+        : "Unlock your 30-day focus trend",
+    );
+    setText(
+      "overviewPremiumCopy",
+      currentOverviewRange === "1y"
+        ? "See whether your discipline is becoming an identity across the year, not just a good week."
+        : "See where momentum is building, where it slips, and how your month is really moving.",
+    );
+    if (state.isSignedIn) {
+      setText("overviewPremiumBtn", "Unlock full focus trends");
+      setText("overviewPremiumNote", "Pro unlocks 30D and 1Y overview ranges.");
+    } else {
+      setText("overviewPremiumBtn", "Sign in to continue");
+      setText(
+        "overviewPremiumNote",
+        "Sign in first, then you can unlock Pro and keep your trends synced.",
+      );
+    }
+    if (btn) {
+      btn.onclick = () => {
+        if (!state.isSignedIn) {
+          activateDashboardTab("profile");
+          setText("dashAuthStatus", "Sign in to unlock long-range focus trends.");
+          return;
+        }
+        window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+      };
+    }
+  });
+}
+
+function updateHistoryPremiumState() {
+  getOverviewAccessState((state) => {
+    const locked = isHistoryRangePremiumLocked(currentHistoryRange, state);
+    const card = document.querySelector(".history-feed-card");
+    const overlay = el("historyPremiumOverlay");
+    const btn = el("historyPremiumBtn");
+
+    if (card) card.classList.toggle("is-premium-locked", locked);
+    if (overlay) overlay.style.display = locked ? "grid" : "none";
+    if (!locked) return;
+
+    const isAllTime = currentHistoryRange === "all";
+    setText("historyPremiumKicker", isAllTime ? "Full Archive" : "Pro Archive");
+    setText(
+      "historyPremiumTitle",
+      isAllTime ? "Unlock your complete work log" : `Unlock your ${currentHistoryRange.toUpperCase()} session archive`,
+    );
+    setText(
+      "historyPremiumCopy",
+      isAllTime
+        ? "See every session, every recovery, and the work history that defines your discipline over time."
+        : "Look past the current week and see whether your focus is actually compounding across longer stretches.",
+    );
+    if (state.isSignedIn) {
+      setText("historyPremiumBtn", "Unlock full history");
+      setText("historyPremiumNote", "DeepLock Pro unlocks 30D, 90D, and All history ranges.");
+    } else {
+      setText("historyPremiumBtn", "Sign in to continue");
+      setText(
+        "historyPremiumNote",
+        "Sign in first, then unlock Pro to keep your archive synced and protected.",
+      );
+    }
+    if (btn) {
+      btn.onclick = () => {
+        if (!state.isSignedIn) {
+          activateDashboardTab("profile");
+          setText("dashAuthStatus", "Sign in to unlock your full focus archive.");
+          return;
+        }
+        window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+      };
+    }
+  });
+}
+
+function updateInsightsPremiumState() {
+  getOverviewAccessState((state) => {
+    const locked = isInsightsRangePremiumLocked(currentInsightsRange, state);
+    const chartCard = document.querySelector(".insights-chart-card");
+    const overlay = el("insightsPremiumOverlay");
+    const btn = el("insightsPremiumBtn");
+
+    if (chartCard) chartCard.classList.toggle("is-premium-locked", locked);
+    if (overlay) overlay.style.display = locked ? "grid" : "none";
+    if (!locked) return;
+
+    const isYear = currentInsightsRange === "1y";
+    setText("insightsPremiumKicker", isYear ? "Yearly Pattern" : "30-Day Pattern");
+    setText(
+      "insightsPremiumTitle",
+      isYear ? "Unlock your yearly distraction pattern" : "Unlock your 30-day distraction pattern",
+    );
+    setText(
+      "insightsPremiumCopy",
+      isYear
+        ? "See whether distraction is becoming a season in your life, or whether your focus is finally compounding."
+        : "See whether this month is getting tighter, looser, or quietly leaking more attention than you realize.",
+    );
+    if (state.isSignedIn) {
+      setText("insightsPremiumBtn", "Unlock full pattern view");
+      setText("insightsPremiumNote", "30D and 1Y Insights are part of DeepLock Pro.");
+    } else {
+      setText("insightsPremiumBtn", "Sign in to continue");
+      setText(
+        "insightsPremiumNote",
+        "Sign in first, then unlock Pro to keep your long-range focus story synced.",
+      );
+    }
+    if (btn) {
+      btn.onclick = () => {
+        if (!state.isSignedIn) {
+          activateDashboardTab("profile");
+          setText("dashAuthStatus", "Sign in to unlock long-range Insights.");
+          return;
+        }
+        window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+      };
+    }
+  });
+}
+
+function canUsePremiumBlocking(state = sitesAccessState) {
+  return !!state.isPro;
+}
+
+function routeToPremiumBlocking(state = sitesAccessState) {
+  if (!state.isSignedIn) {
+    activateDashboardTab("profile");
+    setText("dashAuthStatus", "Sign in to unlock custom blocking and extra Smart Lock sites.");
+    return;
+  }
+  window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+}
+
+function updateSitesPremiumState() {
+  getOverviewAccessState((state) => {
+    sitesAccessState = state;
+    const customCard = document.querySelector(".sites-custom-card");
+    const customOverlay = el("sitesPremiumOverlay");
+    const customBtn = el("sitesPremiumBtn");
+    const addBtn = el("smartLockAddToggle");
+    const addNote = el("smartLockUpgradeNote");
+    const locked = !canUsePremiumBlocking(state);
+
+    if (customCard) customCard.classList.toggle("is-premium-locked", locked);
+    if (customOverlay) customOverlay.style.display = locked ? "grid" : "none";
+    if (addBtn) {
+      addBtn.classList.toggle("is-premium", locked);
+      addBtn.textContent = locked ? "Unlock more sites" : "Add more sites";
+    }
+    if (addNote) addNote.style.display = locked ? "block" : "none";
+
+    if (customBtn) {
+      customBtn.onclick = () => routeToPremiumBlocking(state);
+    }
+
+    setText(
+      "sitesPremiumBtn",
+      state.isSignedIn ? "Unlock custom blocking" : "Sign in to continue",
+    );
+    setText(
+      "sitesPremiumNote",
+      state.isSignedIn
+        ? "Custom blocked sites and extra Smart Lock sites are part of DeepLock Pro."
+        : "Sign in first, then unlock Pro to keep your custom blocking synced across devices.",
+    );
+
+    const smartLockAddPanel = el("smartLockAddPanel");
+    if (locked && smartLockAddPanel) smartLockAddPanel.style.display = "none";
+    const strictEl = el("autoKillStrictMode");
+    const strictModeUnlocked = state.isPro || TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING;
+    if (strictEl) {
+      strictEl.disabled = !strictModeUnlocked;
+      if (!strictModeUnlocked) strictEl.checked = false;
+    }
+    setText(
+      "smartLockStrictCopy",
+      !strictModeUnlocked
+        ? "Pro only. Remove the Continue option so Smart Lock becomes a no-escape intervention."
+        : strictEl?.checked
+          ? "Strict Mode is on. When Smart Lock intervenes, Continue stays blocked and you must lock back in."
+          : "Remove the Continue option when Smart Lock intervenes.",
+    );
+  });
 }
 
 function formatMinutes(mins) {
@@ -204,6 +463,275 @@ function formatMinutes(mins) {
   if (hours > 0 && remaining > 0) return `${hours}h ${remaining}m`;
   if (hours > 0) return `${hours}h`;
   return `${safe}m`;
+}
+
+function formatHistoryDateLabel(dateKey) {
+  const date = new Date(`${dateKey}T00:00:00`);
+  return date.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function getHistoryRangeDays(rangeKey) {
+  if (rangeKey === "7d") return 7;
+  if (rangeKey === "30d") return 30;
+  if (rangeKey === "90d") return 90;
+  return null;
+}
+
+function getHistorySourceLabel(source) {
+  return source === "CLOUD" ? "CLOUD SYNCED" : "LOCAL";
+}
+
+function getDefaultQuickSites() {
+  return QUICK_BLOCK_SITES.map((site) => ({
+    ...site,
+    enabled: true,
+  }));
+}
+
+function loadHistoryQuickSites() {
+  chrome.storage.local.get([QUICK_BLOCK_KEY], (data) => {
+    const stored = Array.isArray(data[QUICK_BLOCK_KEY]) ? data[QUICK_BLOCK_KEY] : [];
+    const merged = QUICK_BLOCK_SITES.map((site) => {
+      const saved = stored.find((item) => item.domain === site.domain);
+      return {
+        ...site,
+        enabled: saved?.enabled !== undefined ? !!saved.enabled : true,
+      };
+    });
+    renderHistoryQuickSites(merged);
+    chrome.storage.local.set({ [QUICK_BLOCK_KEY]: merged });
+  });
+}
+
+function renderHistoryQuickSites(sites) {
+  const list = el("historyQuickSitesList");
+  if (!list) return;
+
+  list.innerHTML = sites
+    .slice(0, 4)
+    .map(
+      (site) => `
+        <div class="history-blocksite-row">
+          <div class="history-blocksite-copy">
+            <div class="history-blocksite-name">${site.name}</div>
+            <div class="history-blocksite-domain">${site.domain}</div>
+          </div>
+          <label class="history-blocksite-toggle">
+            <input type="checkbox" data-domain="${site.domain}" ${site.enabled ? "checked" : ""} />
+            <span class="history-blocksite-slider"></span>
+          </label>
+        </div>
+      `,
+    )
+    .join("");
+
+  list.querySelectorAll("input[type='checkbox']").forEach((input) => {
+    input.addEventListener("change", saveHistoryQuickSitesFromUI);
+  });
+}
+
+function saveHistoryQuickSitesFromUI() {
+  chrome.storage.local.get([QUICK_BLOCK_KEY], (data) => {
+    const stored = Array.isArray(data[QUICK_BLOCK_KEY])
+      ? data[QUICK_BLOCK_KEY]
+      : getDefaultQuickSites();
+    const next = QUICK_BLOCK_SITES.map((site) => {
+      const visibleToggle = document.querySelector(
+        `#historyQuickSitesList input[data-domain="${site.domain}"]`,
+      );
+      const saved = stored.find((item) => item.domain === site.domain);
+      return {
+        ...site,
+        enabled:
+          visibleToggle !== null
+            ? !!visibleToggle.checked
+            : saved?.enabled !== undefined
+              ? !!saved.enabled
+              : true,
+      };
+    });
+    chrome.storage.local.set({ [QUICK_BLOCK_KEY]: next });
+  });
+}
+
+function getEnabledHistoryQuickDomains(callback) {
+  chrome.storage.local.get([QUICK_BLOCK_KEY], (data) => {
+    const stored = Array.isArray(data[QUICK_BLOCK_KEY])
+      ? data[QUICK_BLOCK_KEY]
+      : getDefaultQuickSites();
+    callback(
+      stored
+        .filter((site) => site.enabled)
+        .flatMap((site) =>
+          (Array.isArray(site.filters) && site.filters.length ? site.filters : [site.filter])
+            .filter(Boolean)
+            .map((filter) => ({
+              name: site.name,
+              filter,
+              domain:
+                filter === "||twitter.com^" && site.domain === "x.com"
+                  ? "twitter.com"
+                  : site.domain,
+            })),
+        ),
+    );
+  });
+}
+
+function getBlockedSiteName(entry) {
+  try {
+    if (entry && typeof entry === "object") {
+      return entry.name || normalizeDomain(entry.domain || entry.filter);
+    }
+    if (typeof entry !== "string") return "";
+    const filterMatch = entry.match(/\|\|([^|^/\s]+)\^/);
+    if (filterMatch) return filterMatch[1];
+    const globMatch = entry.match(/\*:\/\/(?:www\.)?([^/*]+)/);
+    if (globMatch) return globMatch[1].replace(/^\*\./, "");
+    return normalizeDomain(entry);
+  } catch (_) {
+    return "";
+  }
+}
+
+function getDefaultScheduleSiteDraft() {
+  return QUICK_BLOCK_SITES.slice(0, 4).map((site) => ({
+    ...site,
+    enabled: true,
+  }));
+}
+
+function updateScheduleSiteModeUI(mode) {
+  const picker = el("schedSitesPicker");
+  const pill = el("schedSitesPill");
+  const note = el("schedSitesNote");
+
+  document.querySelectorAll('input[name="schedSiteMode"]').forEach((input) => {
+    input.checked = input.value === mode;
+  });
+
+  if (picker) picker.style.display = mode === "custom" ? "block" : "none";
+  if (pill) {
+    pill.textContent =
+      mode === "custom" ? "Using custom schedule sites" : "Using current list";
+  }
+  if (note) {
+    note.textContent =
+      mode === "custom"
+        ? "DeepLock will save this exact set and use it when the schedule fires later."
+        : "This schedule will always use whatever is currently active in your Blocked Sites tab.";
+  }
+}
+
+function renderScheduleSitesDraft(sites) {
+  const grid = el("schedSitesGrid");
+  if (!grid) return;
+
+  grid.innerHTML = sites
+    .slice(0, 4)
+    .map(
+      (site) => `
+        <div class="sched-site-row">
+          <div class="sched-site-copy">
+            <div class="sched-site-name">${site.name}</div>
+            <div class="sched-site-domain">${site.domain}</div>
+          </div>
+          <label class="sched-site-toggle">
+            <input type="checkbox" data-domain="${site.domain}" ${site.enabled ? "checked" : ""} />
+            <span class="sched-site-slider"></span>
+          </label>
+        </div>
+      `,
+    )
+    .join("");
+
+  grid.querySelectorAll("input[type='checkbox']").forEach((input) => {
+    input.addEventListener("change", saveScheduleSitesDraftFromUI);
+  });
+}
+
+function saveScheduleSitesDraftFromUI() {
+  chrome.storage.local.get([SCHEDULE_SITE_DRAFT_KEY], (data) => {
+    const stored = Array.isArray(data[SCHEDULE_SITE_DRAFT_KEY])
+      ? data[SCHEDULE_SITE_DRAFT_KEY]
+      : getDefaultScheduleSiteDraft();
+    const next = QUICK_BLOCK_SITES.slice(0, 4).map((site) => {
+      const visibleToggle = document.querySelector(
+        `#schedSitesGrid input[data-domain="${site.domain}"]`,
+      );
+      const saved = stored.find((item) => item.domain === site.domain);
+      return {
+        ...site,
+        enabled:
+          visibleToggle !== null
+            ? !!visibleToggle.checked
+            : saved?.enabled !== undefined
+              ? !!saved.enabled
+              : true,
+      };
+    });
+    chrome.storage.local.set({ [SCHEDULE_SITE_DRAFT_KEY]: next }, () => {
+      updateSchedulePreview();
+    });
+  });
+}
+
+function loadScheduleSiteDraft() {
+  chrome.storage.local.get([SCHEDULE_SITE_MODE_KEY, SCHEDULE_SITE_DRAFT_KEY], (data) => {
+    const mode = data[SCHEDULE_SITE_MODE_KEY] === "custom" ? "custom" : "current";
+    const stored = Array.isArray(data[SCHEDULE_SITE_DRAFT_KEY]) ? data[SCHEDULE_SITE_DRAFT_KEY] : [];
+    const merged = QUICK_BLOCK_SITES.slice(0, 4).map((site) => {
+      const saved = stored.find((item) => item.domain === site.domain);
+      return {
+        ...site,
+        enabled: saved?.enabled !== undefined ? !!saved.enabled : true,
+      };
+    });
+    chrome.storage.local.set({
+      [SCHEDULE_SITE_MODE_KEY]: mode,
+      [SCHEDULE_SITE_DRAFT_KEY]: merged,
+    });
+    updateScheduleSiteModeUI(mode);
+    renderScheduleSitesDraft(merged);
+    updateSchedulePreview();
+  });
+}
+
+function getEnabledScheduleSiteSnapshot(callback) {
+  chrome.storage.local.get([SCHEDULE_SITE_DRAFT_KEY], (data) => {
+    const stored = Array.isArray(data[SCHEDULE_SITE_DRAFT_KEY])
+      ? data[SCHEDULE_SITE_DRAFT_KEY]
+      : getDefaultScheduleSiteDraft();
+    const enabled = stored
+      .filter((site) => site.enabled)
+      .flatMap((site) =>
+        (Array.isArray(site.filters) && site.filters.length ? site.filters : [site.filter])
+          .filter(Boolean)
+          .map((filter) => ({
+            name: site.name,
+            filter,
+            domain:
+              filter === "||twitter.com^" && site.domain === "x.com"
+                ? "twitter.com"
+                : site.domain,
+          })),
+      );
+    callback(enabled);
+  });
+}
+
+function getScheduleSiteBadgeLabel(schedule) {
+  if ((schedule.siteMode || "current") !== "custom") return "Current list";
+  const snapshot = Array.isArray(schedule.blockedDomainsSnapshot)
+    ? schedule.blockedDomainsSnapshot
+    : [];
+  const names = new Set(snapshot.map((item) => item.name || getBlockedSiteName(item)).filter(Boolean));
+  const count = names.size;
+  return count > 0 ? `${count} custom site${count === 1 ? "" : "s"}` : "Current list";
 }
 
 function normalizeDomain(value) {
@@ -217,15 +745,40 @@ function normalizeDomain(value) {
     .trim();
 }
 
+function isValidWebsiteDomain(value) {
+  const domain = normalizeDomain(value);
+  if (!domain || domain.length > 253) return false;
+  if (!domain.includes(".")) return false;
+  if (domain.startsWith(".") || domain.endsWith(".")) return false;
+  if (/\.\./.test(domain)) return false;
+  if (!/^[a-z0-9.-]+$/.test(domain)) return false;
+  const parts = domain.split(".");
+  if (parts.length < 2) return false;
+  if (parts.some((part) => !part || part.length > 63 || part.startsWith("-") || part.endsWith("-"))) {
+    return false;
+  }
+  const tld = parts[parts.length - 1];
+  return /^[a-z]{2,24}$/.test(tld);
+}
+
+function setInlineMessage(id, message) {
+  const node = el(id);
+  if (!node) return;
+  node.textContent = message || "";
+  node.style.display = message ? "block" : "none";
+}
+
 function getSmartLockSites(customBlockedDomains, storedSettings, defaultMinutes) {
   const presetSites = SMART_LOCK_PRESET_SITES.map((site) => ({
     name: site.name,
     domain: site.domain,
+    isCustom: false,
   }));
   const customSiteEntries = (customBlockedDomains || [])
     .map((site) => ({
       name: site.name || normalizeDomain(site.domain || site.filter),
       domain: normalizeDomain(site.domain || site.filter),
+      isCustom: true,
     }))
     .filter((site) => site.domain);
 
@@ -241,6 +794,7 @@ function getSmartLockSites(customBlockedDomains, storedSettings, defaultMinutes)
     const saved = storedSettings?.[site.domain] || {};
     return {
       ...site,
+      isPrimary: SMART_LOCK_PRIMARY_DOMAINS.has(site.domain),
       enabled:
         saved.enabled !== undefined
           ? !!saved.enabled
@@ -250,6 +804,130 @@ function getSmartLockSites(customBlockedDomains, storedSettings, defaultMinutes)
         Math.min(180, parseInt(saved.minutes || defaultMinutes || 10, 10) || 10),
       ),
     };
+  });
+}
+
+function getVisibleSmartLockSites(sites) {
+  return (sites || []).filter((site) => {
+    if (!canUsePremiumBlocking() && site.isCustom) return false;
+    return site.isPrimary || site.enabled || site.isCustom;
+  });
+}
+
+function getSmartLockCandidateSites(query = "") {
+  const visibleDomains = new Set(
+    getVisibleSmartLockSites(smartLockSitesSnapshot).map((site) => site.domain),
+  );
+  const known = [
+    ...SMART_LOCK_PRESET_SITES.map((site) => ({
+      name: site.name,
+      domain: normalizeDomain(site.domain),
+    })),
+    ...ALL_SITES_FLAT.map((site) => ({
+      name: site.name,
+      domain: normalizeDomain(site.domain),
+    })),
+  ];
+
+  const unique = [];
+  const seen = new Set();
+  known.forEach((site) => {
+    if (!site.domain || seen.has(site.domain) || visibleDomains.has(site.domain)) return;
+    seen.add(site.domain);
+    unique.push(site);
+  });
+
+  const normalizedQuery = normalizeDomain(query);
+  const filtered = normalizedQuery
+    ? unique.filter(
+        (site) =>
+          site.name.toLowerCase().includes(normalizedQuery) ||
+          site.domain.includes(normalizedQuery),
+      )
+    : unique;
+
+  return filtered.slice(0, normalizedQuery ? 8 : 6);
+}
+
+function renderSmartLockAddSuggestions(query = "") {
+  const box = el("smartLockAddSuggestions");
+  if (!box) return;
+
+  const candidates = getSmartLockCandidateSites(query);
+  if (!candidates.length) {
+    box.innerHTML =
+      '<div class="smartlock-add-empty">No more preset suggestions right now. You can still type any domain above.</div>';
+    return;
+  }
+
+  box.innerHTML = candidates
+    .map(
+      (site) => `
+        <button class="smartlock-add-chip" type="button" data-domain="${site.domain}" data-name="${site.name}">
+          ${site.name}
+        </button>
+      `,
+    )
+    .join("");
+
+  box.querySelectorAll(".smartlock-add-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      addSiteToSmartLock(btn.dataset.name || btn.dataset.domain, btn.dataset.domain);
+    });
+  });
+}
+
+function addSiteToSmartLock(name, domain) {
+  if (!canUsePremiumBlocking()) {
+    routeToPremiumBlocking();
+    return;
+  }
+  const cleanDomain = normalizeDomain(domain);
+  if (!isValidWebsiteDomain(cleanDomain)) {
+    setInlineMessage(
+      "smartLockAddError",
+      "Enter a valid website like youtube.com or news.ycombinator.com.",
+    );
+    return;
+  }
+  setInlineMessage("smartLockAddError", "");
+
+  const existingCustom = customSites.find(
+    (site) => normalizeDomain(site.domain || site.filter) === cleanDomain,
+  );
+  const isPreset = SMART_LOCK_PRESET_SITES.some(
+    (site) => normalizeDomain(site.domain) === cleanDomain,
+  );
+
+  if (!existingCustom && !isPreset) {
+    customSites.push({
+      name: name || cleanDomain,
+      domain: cleanDomain,
+      filter: `||${cleanDomain}^`,
+    });
+    chrome.runtime.sendMessage({
+      action: "saveCustomSites",
+      domains: customSites,
+    });
+    renderCustomSites();
+    renderCategoryGrid(activeCategory);
+  }
+
+  const addInput = el("smartLockAddInput");
+  if (addInput) addInput.value = "";
+  renderSmartLockAddSuggestions();
+
+  saveSmartLockSettings({
+    autoKillSites: {
+      [cleanDomain]: {
+        enabled: true,
+        minutes: Math.max(
+          1,
+          Math.min(180, parseInt(el("autoKillMinutes")?.value || "10", 10) || 10),
+        ),
+        name: name || cleanDomain,
+      },
+    },
   });
 }
 
@@ -275,6 +953,7 @@ function initTheme() {
     const next = current === "light" ? "dark" : "light";
     applyTheme(next);
     chrome.storage.local.set({ [DASHBOARD_THEME_KEY]: next });
+    saveDashboardTheme(next).catch(() => {});
   });
 }
 
@@ -285,19 +964,23 @@ function initTheme() {
 function initDashboard() {
   if (!window.__deepLockAllowed) return; // safety net
   initTheme();
+  document.querySelector(".main")?.classList.add("insights-wide");
   setDateRange();
   initOverviewUI();
   bindTabNav();
   checkActiveSession();
   loadAllData();
   loadProfileTab();
+  refreshSubscriptionUi();
   renderDefaultSites();
   loadCustomSites();
+  updateSitesPremiumState();
   bindSiteEvents();
+  bindHistoryEvents();
   bindProfileEvents();
   initScheduleTab();
   initInsightsTab();
-  loadInsightsData();
+  refreshInsightsView();
   initSubscriptionManagement();
   schedTabInited = true;
 }
@@ -306,17 +989,21 @@ function initOverviewUI() {
   currentOverviewQuoteIndex = Math.floor(Math.random() * QUOTES.length);
   applyOverviewQuote();
 
+  document
+    .querySelectorAll(".overview-range-tab")
+    .forEach((node) => node.classList.toggle("active", node.dataset.range === currentOverviewRange));
+
   document.querySelectorAll(".overview-range-tab").forEach((btn) => {
     btn.addEventListener("click", () => {
       document
         .querySelectorAll(".overview-range-tab")
         .forEach((node) => node.classList.remove("active"));
       btn.classList.add("active");
-      currentOverviewRange = btn.dataset.range || "7d";
+      currentOverviewRange = btn.dataset.range || "today";
       if (overviewSnapshot) {
-        setOverviewDateRange(currentOverviewRange);
-        renderOverviewChart(currentOverviewRange, overviewSnapshot);
+        populateOverview(overviewSnapshot);
       }
+      updateOverviewPremiumState();
     });
   });
 
@@ -327,6 +1014,8 @@ function initOverviewUI() {
       applyOverviewQuote();
     });
   }
+
+  updateOverviewPremiumState();
 }
 
 function applyOverviewQuote() {
@@ -348,6 +1037,25 @@ function setDateRange() {
   );
 }
 
+function mapDailyStatsRowsToDailyMap(rows) {
+  return (rows || []).reduce((acc, row) => {
+    if (!row?.date) return acc;
+    acc[row.date] = Number(row.focus_minutes) || 0;
+    return acc;
+  }, {});
+}
+
+function mapSiteUsageRowsToLocal(rows) {
+  return (rows || []).reduce((acc, row) => {
+    if (!row?.date) return acc;
+    acc[row.date] = {
+      date: row.date,
+      sites: row.sites || {},
+    };
+    return acc;
+  }, {});
+}
+
 // ================================
 // LOAD ALL DATA (local + Supabase)
 // ================================
@@ -366,44 +1074,89 @@ function loadAllData() {
       "todayDate",
       "todayBlockedAttempts",
       "focusSessionLog",
+      "siteUsage",
+      DASHBOARD_THEME_KEY,
     ],
     async (data) => {
-      const sessions = data.totalSessions || 0;
-      const totalMins = data.totalFocusMinutes || 0;
-      const streak = data.currentStreak || 0;
-      const longest = data.longestStreak || 0;
-      const daily = data.dailySessions || {};
-      const blocked = data.blockedAttempts || 0;
+      let settings = null;
+      let cloudHistoryRows = [];
+      let cloudDailyRows = [];
+      let cloudUsageRows = [];
+
+      if (data.sbSignedIn) {
+        try {
+          [settings, cloudHistoryRows, cloudDailyRows, cloudUsageRows] = await Promise.all([
+            loadCloudSettings(),
+            getSessionHistory(365),
+            getDailyStats(365),
+            getSiteUsage(365),
+          ]);
+        } catch (e) {
+          console.log("Cloud dashboard hydrate failed, using local:", e);
+        }
+      }
+
+      const daily =
+        cloudDailyRows.length > 0
+          ? mapDailyStatsRowsToDailyMap(cloudDailyRows)
+          : data.dailySessions || {};
+      const focusSessionLog =
+        cloudHistoryRows.length > 0
+          ? normalizeCloudHistoryRows(cloudHistoryRows)
+          : normalizeLocalHistoryEntries(data.focusSessionLog || [], daily);
+      const siteUsage =
+        cloudUsageRows.length > 0
+          ? mapSiteUsageRowsToLocal(cloudUsageRows)
+          : data.siteUsage || {};
+      const sessionDayMap = buildSessionDayMap(focusSessionLog);
+      const sessions =
+        Number(settings?.total_sessions) ||
+        data.totalSessions ||
+        focusSessionLog.length;
+      const totalMins =
+        Number(settings?.total_focus_minutes) ||
+        data.totalFocusMinutes ||
+        focusSessionLog.reduce((sum, entry) => sum + (Number(entry.duration) || 0), 0);
+      const streak = Number(settings?.current_streak) || data.currentStreak || 0;
+      const longest = Number(settings?.longest_streak) || data.longestStreak || 0;
+      const blocked = Object.values(sessionDayMap).reduce(
+        (sum, day) => sum + (Number(day.blockedAttempts) || 0),
+        0,
+      );
       const totalHours = (totalMins / 60).toFixed(1);
       const today = new Date().toISOString().split("T")[0];
-      const focusSessionLog = data.focusSessionLog || [];
-      const sessionDayMap = buildSessionDayMap(focusSessionLog);
-
-      // Today's count from both sources
-      const isSameDay = data.todayDate === today;
-      const todayCount = isSameDay ? data.todaySessionCount || 0 : 0;
+      const todayCount = sessionDayMap[today]?.sessions || 0;
       const todayMins = daily[today] || 0;
-      const todayUrges = isSameDay
-        ? data.todayBlockedAttempts || 0
-        : sessionDayMap[today]?.blockedAttempts || 0;
+      const todayUrges = sessionDayMap[today]?.blockedAttempts || 0;
 
-      setText("totalHours", `${totalHours}h`);
-      setText("totalSessions", sessions);
-      setText("blockedAttempts", blocked);
-      setText("currentStreak", `${streak}d`);
-      setText("longestStreak", `${longest} days`);
-      setText("totalHoursAll", `${totalHours}h`);
-      setText(
-        "bestDay",
-        getBestDay(daily) > 0 ? `${getBestDay(daily)} min` : "—",
-      );
-      setText(
-        "avgSession",
-        sessions > 0 ? `${Math.round(totalMins / sessions)} min` : "—",
-      );
+      const updates = {};
+      if (settings) {
+        if (Array.isArray(settings.custom_blocked_domains)) {
+          updates.customBlockedDomains = settings.custom_blocked_domains;
+        }
+        if (typeof settings.auto_kill_enabled === "boolean") {
+          updates.autoKillEnabled = settings.auto_kill_enabled;
+        }
+        if (Number.isFinite(settings.auto_kill_minutes)) {
+          updates.autoKillMinutes = settings.auto_kill_minutes;
+        }
+        if (settings.auto_kill_sites && typeof settings.auto_kill_sites === "object") {
+          updates.autoKillSites = settings.auto_kill_sites;
+        }
+        if (typeof settings.dashboard_theme === "string") {
+          updates[DASHBOARD_THEME_KEY] = settings.dashboard_theme;
+          applyTheme(settings.dashboard_theme);
+        }
+      }
+      if (cloudDailyRows.length > 0) updates.dailySessions = daily;
+      if (cloudHistoryRows.length > 0) updates.focusSessionLog = focusSessionLog;
+      if (cloudUsageRows.length > 0) updates.siteUsage = siteUsage;
+      if (Object.keys(updates).length) {
+        chrome.storage.local.set(updates, () => {
+          loadCustomSites();
+        });
+      }
 
-      const weekMins = getWeekMinutes(daily);
-      setText("weekScore", Math.min(100, Math.round((weekMins / 840) * 100)));
       populateOverview({
         sessions,
         totalMins,
@@ -420,50 +1173,30 @@ function loadAllData() {
         sessionDayMap,
       });
 
-      setText("todayMins", todayMins);
-      setText("todaySessions", todayCount);
-      setTimeout(() => {
-        const b = el("todayBarFill");
-        if (b) b.style.width = `${Math.min(100, (todayMins / 120) * 100)}%`;
-      }, 300);
-
-      // Streaks tab
-      setText("streakHeroNum", streak);
-      setText(
-        "streakSub",
-        streak > 0
-          ? `${streak} day${streak > 1 ? "s" : ""} in a row. Keep going.`
-          : "Start a session to begin your streak.",
-      );
-      setText("ssCurrentStreak", streak);
-      setText("ssLongestStreak", longest);
-      setText("ssActiveDays", Object.values(daily).filter((v) => v > 0).length);
-
-      renderBarChart(daily);
-      renderHeatmap(daily);
-
       // Profile sync stats
       setText("cloudSessions", sessions);
       setText("cloudStreak", streak);
+      if (cloudHistoryRows.length > 0) {
+        renderHistoryView("CLOUD", focusSessionLog);
+        if (cloudUsageRows.length > 0) {
+          refreshInsightsView();
+        }
+        return;
+      }
 
       // History — try Supabase first, fall back to local
       if (data.sbSignedIn) {
         try {
           const rows = await getSessionHistory(90);
           if (rows && rows.length > 0) {
-            const src = el("historySource");
-            if (src) {
-              src.textContent = "CLOUD SYNCED";
-              src.classList.add("cloud");
-            }
-            renderCloudHistory(rows);
+            renderHistoryView("CLOUD", normalizeCloudHistoryRows(rows));
             return;
           }
         } catch (e) {
           console.log("Cloud history failed, using local:", e);
         }
       }
-      renderLocalHistory(daily);
+      renderHistoryView("LOCAL", normalizeLocalHistoryEntries(focusSessionLog, daily));
     },
   );
 }
@@ -480,8 +1213,15 @@ function loadProfileTab() {
       "licenseKey",
       "currentStreak",
       "totalSessions",
+      "isPro",
+      "subscriptionPlan",
+      "subscriptionStatus",
+      "subscriptionRenewsAt",
+      "subscriptionSource",
     ],
     (data) => {
+      const isSignedIn = !!data.sbSignedIn && !!data.sbEmail;
+      const isPro = !!data.isPro;
       if (data.sbSignedIn && data.sbEmail) {
         const pOut = el("profileSignedOut");
         if (pOut) pOut.style.display = "none";
@@ -492,12 +1232,30 @@ function loadProfileTab() {
         if (avatar) avatar.textContent = data.sbEmail[0].toUpperCase();
         setText("cloudSessions", data.totalSessions || 0);
         setText("cloudStreak", data.currentStreak || 0);
+        setText("profilePlanBadge", isPro ? "Pro plan active" : "Free plan");
+        setText("profileSyncBadge", "Cloud sync ready");
+        setText(
+          "profileProtectionBadge",
+          isPro ? "Progress fully protected" : "Progress not fully protected yet",
+        );
+        setText(
+          "profileAccountNote",
+          isPro
+            ? "Your account, streak, and premium setup are linked and restorable across devices."
+            : "Your account is linked. Upgrade when you want DeepLock to protect the full system around your focus.",
+        );
       } else {
         const pOut = el("profileSignedOut");
         if (pOut) pOut.style.display = "block";
         const pIn = el("profileSignedIn");
         if (pIn) pIn.style.display = "none";
+        setText("profileUpgradeNote", "Sign in first, then upgrade through Lemon Squeezy. Legacy license restore stays available if you bought before.");
       }
+
+      const freeState = el("subStateFree");
+      const activeState = el("subStateActive");
+      if (freeState) freeState.style.display = !isPro ? "block" : "none";
+      if (activeState) activeState.style.display = isPro ? "block" : "none";
 
       // License key
       if (data.licenseKey) {
@@ -527,7 +1285,9 @@ function bindProfileEvents() {
             status.textContent = "✓ Connected successfully!";
           }
           loadProfileTab();
+          refreshSubscriptionUi();
           loadAllData(); // reload history with cloud data
+          loadCustomSites();
         } else {
           signInBtn.disabled = false;
           signInBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg> Sign in with Google`;
@@ -543,7 +1303,33 @@ function bindProfileEvents() {
   const signOutBtn = el("dashSignOutBtn");
   if (signOutBtn) {
     signOutBtn.addEventListener("click", () => {
-      chrome.runtime.sendMessage({ action: "signOut" }, () => loadProfileTab());
+      chrome.runtime.sendMessage({ action: "signOut" }, () => {
+        loadProfileTab();
+        refreshSubscriptionUi();
+        loadAllData();
+      });
+    });
+  }
+
+  const profileUpgradeBtn = el("profileUpgradeBtn");
+  if (profileUpgradeBtn) {
+    profileUpgradeBtn.addEventListener("click", () => {
+      chrome.storage.local.get(["sbSignedIn"], (data) => {
+        if (!data.sbSignedIn) {
+          activateDashboardTab("profile");
+          setText("dashAuthStatus", "Sign in before upgrading to DeepLock Pro.");
+          return;
+        }
+        window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+      });
+    });
+  }
+
+  const profileSeeIncludedBtn = el("profileSeeIncludedBtn");
+  if (profileSeeIncludedBtn) {
+    profileSeeIncludedBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      activateDashboardTab("insights");
     });
   }
 
@@ -672,15 +1458,30 @@ let activeCategory = "social";
 
 function loadCustomSites() {
   chrome.storage.local.get(
-    ["customBlockedDomains", "autoKillEnabled", "autoKillMinutes", "autoKillSites"],
+    ["customBlockedDomains", "autoKillEnabled", "autoKillMinutes", "autoKillSites", "autoKillStrictMode"],
     (data) => {
       customSites = data.customBlockedDomains || [];
       renderCustomSites();
       renderCategoryGrid(activeCategory);
       const enabledEl = el("autoKillEnabled");
       const minutesEl = el("autoKillMinutes");
+      const strictEl = el("autoKillStrictMode");
       if (enabledEl) enabledEl.checked = !!data.autoKillEnabled;
       if (minutesEl) minutesEl.value = data.autoKillMinutes || 10;
+      if (strictEl) {
+        strictEl.checked =
+          !!data.autoKillStrictMode &&
+          (canUsePremiumBlocking() || TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING);
+        strictEl.disabled = !(canUsePremiumBlocking() || TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING);
+      }
+      setText(
+        "smartLockStrictCopy",
+        canUsePremiumBlocking() || TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING
+          ? data.autoKillStrictMode
+            ? "Strict Mode is on. When Smart Lock intervenes, Continue stays blocked and you must lock back in."
+            : "Remove the Continue option when Smart Lock intervenes."
+          : "Pro only. Remove the Continue option so Smart Lock becomes a no-escape intervention."
+      );
       renderSmartLockSites(
         getSmartLockSites(
           customSites,
@@ -701,23 +1502,21 @@ function setOverviewDateRange(rangeKey) {
   const now = new Date();
   let text = "";
 
-  if (rangeKey === "7d") {
+  if (rangeKey === "today") {
+    text = `Today · ${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+  } else if (rangeKey === "7d") {
     const start = new Date(now);
-    start.setDate(start.getDate() - 7);
+    start.setDate(start.getDate() - 6);
     text = formatDateRangeLabel(start, now, true);
-  } else if (rangeKey === "1m") {
+  } else if (rangeKey === "30d") {
     const start = new Date(now);
     start.setDate(start.getDate() - 29);
     text = formatDateRangeLabel(start, now, true);
-  } else if (rangeKey === "6m") {
-    const start = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-    text = `${start.toLocaleDateString("en-US", { month: "short", year: "numeric" })} – ${now.toLocaleDateString("en-US", { month: "short", year: "numeric" })}`;
   } else {
     const start = new Date(now.getFullYear(), now.getMonth() - 11, 1);
     text = `${start.toLocaleDateString("en-US", { month: "short", year: "numeric" })} – ${now.toLocaleDateString("en-US", { month: "short", year: "numeric" })}`;
   }
 
-  setText("dateRange", text);
   setText("ovDateRange", text);
 }
 
@@ -734,6 +1533,86 @@ function formatDateRangeLabel(start, end, includeYear) {
   return `${startText} – ${endText}`;
 }
 
+function getOverviewRangeDayCount(rangeKey) {
+  if (rangeKey === "today") return 1;
+  if (rangeKey === "7d") return 7;
+  if (rangeKey === "30d") return 30;
+  return 365;
+}
+
+function getOverviewRangeDateKeys(rangeKey) {
+  return getRecentDateKeys(getOverviewRangeDayCount(rangeKey));
+}
+
+function getOverviewRangeMeta(rangeKey) {
+  if (rangeKey === "today") {
+    return {
+      label: "Today",
+      pulseTitle: "Today at a glance",
+      chartNote: "See how your day is unfolding hour by hour.",
+      goalLabel: "Today Goal",
+    };
+  }
+  if (rangeKey === "7d") {
+    return {
+      label: "Last 7 days",
+      pulseTitle: "Your 7-day pulse",
+      chartNote: "A simple week view of focused time and blocked urges.",
+      goalLabel: "7-Day Goal",
+    };
+  }
+  if (rangeKey === "30d") {
+    return {
+      label: "Last 30 days",
+      pulseTitle: "Your 30-day pulse",
+      chartNote: "Longer trend, clearer pattern: where momentum held and where it slipped.",
+      goalLabel: "30-Day Goal",
+    };
+  }
+  return {
+    label: "Last 12 months",
+    pulseTitle: "Your yearly pulse",
+    chartNote: "A wide-angle view of your consistency across the year.",
+    goalLabel: "Yearly Goal",
+  };
+}
+
+function summarizeOverviewRange(rangeKey, data) {
+  const dateKeys = getOverviewRangeDateKeys(rangeKey);
+  const focusMinutes = dateKeys.reduce((sum, key) => sum + (data.daily[key] || 0), 0);
+  const sessions = dateKeys.reduce((sum, key) => sum + (data.sessionDayMap[key]?.sessions || 0), 0);
+  const blocked = dateKeys.reduce((sum, key) => sum + (data.sessionDayMap[key]?.blockedAttempts || 0), 0);
+  const goalMinutes = getOverviewRangeDayCount(rangeKey) * OVERVIEW_DAILY_GOAL_MINUTES;
+  const goalProgress = goalMinutes > 0 ? Math.min(100, Math.round((focusMinutes / goalMinutes) * 100)) : 0;
+  const averageDaily = Math.round(focusMinutes / Math.max(1, dateKeys.length));
+  return {
+    ...getOverviewRangeMeta(rangeKey),
+    dateKeys,
+    focusMinutes,
+    sessions,
+    blocked,
+    goalMinutes,
+    goalProgress,
+    averageDaily,
+  };
+}
+
+function getOverviewPsychLine(summary, data) {
+  if (summary.focusMinutes <= 0) {
+    return `No focus data ${summary.label.toLowerCase()} yet. Start one clean session and DeepLock will begin shaping your story.`;
+  }
+  if (summary.goalProgress >= 100) {
+    return `You hit the target ${summary.label.toLowerCase()}. That's the kind of consistency that changes identity, not just output.`;
+  }
+  if (summary.goalProgress >= 70) {
+    return `You're building real momentum ${summary.label.toLowerCase()}. Keep the rhythm and let the streak work on your psychology.`;
+  }
+  if (summary.blocked > summary.sessions && summary.blocked > 0) {
+    return `DeepLock protected you ${summary.blocked} times ${summary.label.toLowerCase()}. Friction is working, but there is still room to tighten the system.`;
+  }
+  return `This is still recoverable ${summary.label.toLowerCase()}. One strong session today can reset the emotional tone of the whole range.`;
+}
+
 function renderSmartLockSites(sites, masterEnabled) {
   const list = el("smartLockSitesList");
   const state = el("smartLockSummaryState");
@@ -745,6 +1624,7 @@ function renderSmartLockSites(sites, masterEnabled) {
   const signalCopy = el("smartLockSignalCopy");
   const summaryBehavior = el("smartLockSummaryBehavior");
   const summaryEffect = el("smartLockSummaryEffect");
+  smartLockSitesSnapshot = sites;
   if (!list) return;
 
   const armedCount = sites.filter((site) => site.enabled).length;
@@ -808,7 +1688,7 @@ function renderSmartLockSites(sites, masterEnabled) {
       : "Works on active distracting tabs";
   }
 
-  list.innerHTML = sites
+  list.innerHTML = getVisibleSmartLockSites(sites)
     .map(
       (site) => `
         <div class="smartlock-site-row ${masterEnabled ? "" : "is-disabled"} ${site.enabled ? "is-armed" : ""}" data-domain="${site.domain}">
@@ -819,7 +1699,7 @@ function renderSmartLockSites(sites, masterEnabled) {
               alt=""
             />
             <div class="smartlock-site-copy">
-              <div class="smartlock-site-name">${site.name}</div>
+              <div class="smartlock-site-name">${site.name}${site.isPrimary ? '<span class="smartlock-site-badge">Default</span>' : ""}</div>
               <div class="smartlock-site-domain">${site.domain}</div>
               <div class="smartlock-site-hint">${
                 site.enabled
@@ -848,12 +1728,17 @@ function renderSmartLockSites(sites, masterEnabled) {
       `,
     )
     .join("");
+
+  renderSmartLockAddSuggestions(el("smartLockAddInput")?.value || "");
 }
 
 function saveSmartLockSettings(partial = {}) {
   chrome.storage.local.get(
-    ["customBlockedDomains", "autoKillSites", "autoKillMinutes", "autoKillEnabled"],
+    ["customBlockedDomains", "autoKillSites", "autoKillMinutes", "autoKillEnabled", "autoKillStrictMode"],
     (data) => {
+      const effectiveCustomSites = Array.isArray(customSites)
+        ? customSites
+        : data.customBlockedDomains || [];
       let nextMinutes =
         partial.autoKillMinutes !== undefined
           ? partial.autoKillMinutes
@@ -862,8 +1747,21 @@ function saveSmartLockSettings(partial = {}) {
         partial.autoKillEnabled !== undefined
           ? partial.autoKillEnabled
           : !!data.autoKillEnabled;
+      const nextStrictMode =
+        partial.autoKillStrictMode !== undefined
+          ? !!partial.autoKillStrictMode
+          : !!data.autoKillStrictMode;
+      if (
+        partial.autoKillStrictMode !== undefined &&
+        !(canUsePremiumBlocking() || TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING)
+      ) {
+        routeToPremiumBlocking();
+        const strictEl = el("autoKillStrictMode");
+        if (strictEl) strictEl.checked = false;
+        return;
+      }
       const baseSites = getSmartLockSites(
-        data.customBlockedDomains || [],
+        effectiveCustomSites,
         data.autoKillSites || {},
         nextMinutes,
       );
@@ -895,11 +1793,17 @@ function saveSmartLockSettings(partial = {}) {
           autoKillEnabled: nextMaster,
           autoKillMinutes: nextMinutes,
           autoKillSites: nextSiteMap,
+          autoKillStrictMode: nextStrictMode,
         },
         () => {
+          saveSmartLockConfig({
+            enabled: nextMaster,
+            minutes: nextMinutes,
+            sites: nextSiteMap,
+          }).catch(() => {});
           renderSmartLockSites(
             getSmartLockSites(
-              data.customBlockedDomains || [],
+              effectiveCustomSites,
               nextSiteMap,
               nextMinutes,
             ),
@@ -908,6 +1812,14 @@ function saveSmartLockSettings(partial = {}) {
           chrome.runtime.sendMessage({ action: "refreshAutoKillTracking" }, () => {
             void chrome.runtime.lastError;
           });
+          setText(
+            "smartLockStrictCopy",
+            canUsePremiumBlocking() || TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING
+              ? nextStrictMode
+                ? "Strict Mode is on. When Smart Lock intervenes, Continue stays blocked and you must lock back in."
+                : "Remove the Continue option when Smart Lock intervenes."
+              : "Pro only. Remove the Continue option so Smart Lock becomes a no-escape intervention.",
+          );
         },
       );
     },
@@ -939,6 +1851,10 @@ function renderCategoryGrid(cat) {
     btn.addEventListener("click", () => {
       const filter = btn.dataset.filter;
       const already = customSites.find((s) => s.filter === filter);
+      if (!canUsePremiumBlocking()) {
+        routeToPremiumBlocking();
+        return;
+      }
       if (already) {
         customSites = customSites.filter((s) => s.filter !== filter);
       } else {
@@ -977,6 +1893,7 @@ function bindSmartSearch() {
 
   input.addEventListener("input", () => {
     const q = input.value.trim().toLowerCase();
+    setInlineMessage("siteSearchError", "");
     clearBtn.style.display = q ? "block" : "none";
     clearTimeout(debounceTimer);
 
@@ -992,7 +1909,7 @@ function bindSmartSearch() {
     ).slice(0, 5);
 
     // If the query looks like a domain itself — always show it as a direct-add option
-    const looksLikeDomain = /^[a-z0-9-]+\.[a-z]{2,}/.test(q);
+    const looksLikeDomain = isValidWebsiteDomain(q);
 
     showSearchResults(localMatches, q, looksLikeDomain);
   });
@@ -1005,13 +1922,22 @@ function bindSmartSearch() {
         .replace(/^https?:\/\//, "")
         .replace(/^www\./, "")
         .split("/")[0];
-      if (q && q.includes(".")) addDomainDirectly(q, q);
+      if (!q) return;
+      if (!isValidWebsiteDomain(q)) {
+        setInlineMessage(
+          "siteSearchError",
+          "Enter a valid website like twitch.tv or chess.com.",
+        );
+        return;
+      }
+      addDomainDirectly(q, q);
     }
   });
 
   clearBtn.addEventListener("click", () => {
     input.value = "";
     clearBtn.style.display = "none";
+    setInlineMessage("siteSearchError", "");
     results.style.display = "none";
     input.focus();
   });
@@ -1057,6 +1983,10 @@ function showSearchResults(matches, query, showDirectAdd) {
     item.addEventListener("click", () => {
       const filter = item.dataset.filter;
       const already = customSites.find((s) => s.filter === filter);
+      if (!canUsePremiumBlocking()) {
+        routeToPremiumBlocking();
+        return;
+      }
       if (already) {
         customSites = customSites.filter((s) => s.filter !== filter);
       } else {
@@ -1075,7 +2005,7 @@ function showSearchResults(matches, query, showDirectAdd) {
             s.name.toLowerCase().includes(q) ||
             s.domain.toLowerCase().includes(q),
         ).slice(0, 5);
-        showSearchResults(localMatches, q, /^[a-z0-9-]+\.[a-z]{2,}/.test(q));
+        showSearchResults(localMatches, q, isValidWebsiteDomain(q));
       }
       renderCategoryGrid(activeCategory);
     });
@@ -1083,9 +2013,22 @@ function showSearchResults(matches, query, showDirectAdd) {
 }
 
 function addDomainDirectly(name, domain) {
-  const filter = `||${domain}^`;
+  if (!canUsePremiumBlocking()) {
+    routeToPremiumBlocking();
+    return;
+  }
+  const cleanDomain = normalizeDomain(domain);
+  if (!isValidWebsiteDomain(cleanDomain)) {
+    setInlineMessage(
+      "siteSearchError",
+      "Enter a valid website like twitch.tv or chess.com.",
+    );
+    return;
+  }
+  setInlineMessage("siteSearchError", "");
+  const filter = `||${cleanDomain}^`;
   if (!customSites.find((s) => s.filter === filter)) {
-    customSites.push({ name, domain, filter });
+    customSites.push({ name: cleanDomain, domain: cleanDomain, filter });
     saveAndRenderCustom();
   }
   const input = el("siteSearchInput");
@@ -1132,6 +2075,10 @@ function renderCustomSites() {
 }
 
 function saveAndRenderCustom() {
+  if (!canUsePremiumBlocking()) {
+    routeToPremiumBlocking();
+    return;
+  }
   chrome.runtime.sendMessage({
     action: "saveCustomSites",
     domains: customSites,
@@ -1166,12 +2113,29 @@ function bindSiteEvents() {
     });
   }
 
+  const autoKillStrictMode = el("autoKillStrictMode");
+  if (autoKillStrictMode) {
+    autoKillStrictMode.addEventListener("click", (event) => {
+      if (canUsePremiumBlocking() || TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING) return;
+      event.preventDefault();
+      autoKillStrictMode.checked = false;
+      routeToPremiumBlocking();
+    });
+    autoKillStrictMode.addEventListener("change", () => {
+      saveSmartLockSettings({ autoKillStrictMode: autoKillStrictMode.checked });
+    });
+  }
+
   bindCategoryTabs();
   bindSmartSearch();
 
   const clearAllBtn = el("clearAllCustomBtn");
   if (clearAllBtn) {
     clearAllBtn.addEventListener("click", () => {
+      if (!canUsePremiumBlocking()) {
+        routeToPremiumBlocking();
+        return;
+      }
       if (clearAllBtn.dataset.confirm === "1") {
         customSites = [];
         saveAndRenderCustom();
@@ -1228,6 +2192,53 @@ function bindSiteEvents() {
           },
         });
       }
+    });
+  }
+
+  const smartLockAddToggle = el("smartLockAddToggle");
+  const smartLockAddPanel = el("smartLockAddPanel");
+  const smartLockAddInput = el("smartLockAddInput");
+  const smartLockAddSubmit = el("smartLockAddSubmit");
+
+  if (smartLockAddToggle && smartLockAddPanel) {
+    smartLockAddToggle.addEventListener("click", () => {
+      if (!canUsePremiumBlocking()) {
+        routeToPremiumBlocking();
+        return;
+      }
+      const isOpen = smartLockAddPanel.style.display !== "none";
+      smartLockAddPanel.style.display = isOpen ? "none" : "block";
+      smartLockAddToggle.textContent = isOpen ? "Add more sites" : "Close";
+      if (!isOpen) {
+        renderSmartLockAddSuggestions(smartLockAddInput?.value || "");
+        smartLockAddInput?.focus();
+      }
+    });
+  }
+
+  if (smartLockAddInput) {
+    smartLockAddInput.addEventListener("input", () => {
+      renderSmartLockAddSuggestions(smartLockAddInput.value || "");
+    });
+    smartLockAddInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (!canUsePremiumBlocking()) {
+          routeToPremiumBlocking();
+          return;
+        }
+        addSiteToSmartLock(smartLockAddInput.value, smartLockAddInput.value);
+      }
+    });
+  }
+
+  if (smartLockAddSubmit) {
+    smartLockAddSubmit.addEventListener("click", () => {
+      if (!canUsePremiumBlocking()) {
+        routeToPremiumBlocking();
+        return;
+      }
+      addSiteToSmartLock(smartLockAddInput?.value, smartLockAddInput?.value);
     });
   }
 }
@@ -1332,6 +2343,334 @@ function renderLocalHistory(daily) {
   });
 }
 
+function normalizeCloudHistoryRows(rows) {
+  return (rows || []).map((row) => {
+    const dateValue =
+      row.date ||
+      (row.created_at
+        ? row.created_at.split("T")[0]
+        : getDateKey(new Date()));
+    const completedAt = row.created_at || `${dateValue}T12:00:00`;
+    return {
+      id: row.id || completedAt,
+      date: dateValue,
+      completedAt,
+      duration: Number(row.duration) || 0,
+      intent: row.intent || "",
+      energyLevel: row.energy_level || null,
+      blockedAttempts: Number(row.blocked_attempts) || 0,
+      source: "cloud",
+      status: row.completed === false ? "Interrupted" : "Completed",
+    };
+  });
+}
+
+function normalizeLocalHistoryEntries(sessionLog, daily) {
+  const logEntries = (sessionLog || [])
+    .map((entry, index) => {
+      const dateValue =
+        entry.date ||
+        (entry.completedAt
+          ? new Date(entry.completedAt).toISOString().split("T")[0]
+          : getDateKey(new Date()));
+      const completedAt =
+        entry.completedAt ||
+        `${dateValue}T${String(entry.hour ?? 12).padStart(2, "0")}:00:00`;
+      return {
+        id: entry.id || `${dateValue}_${index}`,
+        date: dateValue,
+        completedAt,
+        duration: Number(entry.duration) || 0,
+        intent: entry.intent || "",
+        energyLevel: entry.energyLevel || null,
+        blockedAttempts: Number(entry.blockedAttempts) || 0,
+        source: entry.source || "local",
+        status: entry.completed === false ? "Interrupted" : "Completed",
+      };
+    })
+    .filter((entry) => entry.duration > 0);
+
+  if (logEntries.length) {
+    return logEntries.sort(
+      (a, b) => new Date(b.completedAt) - new Date(a.completedAt),
+    );
+  }
+
+  return Object.entries(daily || {})
+    .filter(([, mins]) => Number(mins) > 0)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([date, mins], index) => ({
+      id: `${date}_${index}`,
+      date,
+      completedAt: `${date}T12:00:00`,
+      duration: Number(mins) || 0,
+      intent: "",
+      energyLevel: null,
+      blockedAttempts: 0,
+      source: "local",
+      status: "Completed",
+    }));
+}
+
+function filterHistoryEntries(entries, rangeKey) {
+  const days = getHistoryRangeDays(rangeKey);
+  if (!days) return [...entries];
+  const cutoff = new Date();
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - (days - 1));
+  return entries.filter(
+    (entry) => new Date(`${entry.date}T00:00:00`) >= cutoff,
+  );
+}
+
+function getHistoryGroups(entries) {
+  const byDay = new Map();
+  entries.forEach((entry) => {
+    if (!byDay.has(entry.date)) byDay.set(entry.date, []);
+    byDay.get(entry.date).push(entry);
+  });
+
+  return Array.from(byDay.entries())
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([date, dayEntries]) => {
+      const sorted = [...dayEntries].sort(
+        (a, b) => new Date(b.completedAt) - new Date(a.completedAt),
+      );
+      return {
+        date,
+        label: formatHistoryDateLabel(date),
+        totalMinutes: sorted.reduce(
+          (sum, entry) => sum + (Number(entry.duration) || 0),
+          0,
+        ),
+        blockedAttempts: sorted.reduce(
+          (sum, entry) => sum + (Number(entry.blockedAttempts) || 0),
+          0,
+        ),
+        sessions: sorted,
+      };
+    });
+}
+
+function updateHistorySummary(entries) {
+  const totalSessions = entries.length;
+  const totalMinutes = entries.reduce(
+    (sum, entry) => sum + (Number(entry.duration) || 0),
+    0,
+  );
+  const blockedAttempts = entries.reduce(
+    (sum, entry) => sum + (Number(entry.blockedAttempts) || 0),
+    0,
+  );
+  const avgMinutes = totalSessions
+    ? Math.round(totalMinutes / totalSessions)
+    : 0;
+  const longest = entries.reduce(
+    (max, entry) => Math.max(max, Number(entry.duration) || 0),
+    0,
+  );
+  const activeDays = new Set(entries.map((entry) => entry.date)).size;
+
+  setText("historyTotalSessions", totalSessions);
+  setText("historyTotalFocus", formatMinutes(totalMinutes));
+  setText("historyAvgSession", formatMinutes(avgMinutes));
+  setText("historyLongestSession", formatMinutes(longest));
+  setText(
+    "historyBlockedTotal",
+    `${blockedAttempts} urge${blockedAttempts === 1 ? "" : "s"} resisted`,
+  );
+  setText(
+    "historyConsistency",
+    activeDays > 0
+      ? `${activeDays} active day${activeDays === 1 ? "" : "s"} in this range`
+      : "No consistency signal yet",
+  );
+}
+
+function renderHistoryGroups(entries) {
+  const list = el("historyList");
+  if (!list) return;
+
+  if (!entries.length) {
+    list.innerHTML =
+      '<div class="history-empty">No sessions in this range yet. Start one from the Quick Start card above.</div>';
+    return;
+  }
+
+  const groups = getHistoryGroups(entries);
+  list.innerHTML = groups
+    .map((group) => {
+      const sessionRows = group.sessions
+        .map((entry) => {
+          const timeLabel = new Date(entry.completedAt).toLocaleTimeString(
+            "en-US",
+            { hour: "numeric", minute: "2-digit" },
+          );
+          const energyLabel = entry.energyLevel
+            ? `Energy ${entry.energyLevel}`
+            : "No energy logged";
+          const intent = entry.intent ? escapeHtml(entry.intent) : "Deep work";
+          const source = entry.source === "cloud" ? "Cloud" : "Local";
+          return `
+            <div class="history-session-row">
+              <div class="history-session-main">
+                <div class="history-session-time">${timeLabel}</div>
+                <div class="history-session-intent">${intent}</div>
+                <div class="history-session-meta">
+                  <span>${energyLabel}</span>
+                  <span>${entry.blockedAttempts || 0} urges</span>
+                  <span>${source}</span>
+                </div>
+              </div>
+              <div class="history-session-side">
+                <div class="history-session-duration">${formatMinutes(entry.duration)}</div>
+                <div class="history-session-status">${entry.status}</div>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+
+      return `
+        <section class="history-day-card">
+          <div class="history-day-head">
+            <div>
+              <div class="history-day-title">${group.label}</div>
+              <div class="history-day-sub">${group.sessions.length} session${group.sessions.length === 1 ? "" : "s"} logged</div>
+            </div>
+            <div class="history-day-right">
+              <div class="history-day-total">${formatMinutes(group.totalMinutes)}</div>
+              <div class="history-day-urges">${group.blockedAttempts} urges resisted</div>
+            </div>
+          </div>
+          <div class="history-session-list">${sessionRows}</div>
+        </section>
+      `;
+    })
+    .join("");
+}
+
+function syncHistoryRangeTabs() {
+  document.querySelectorAll(".history-range-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.range === currentHistoryRange);
+  });
+}
+
+function renderHistoryView(source, entries) {
+  historySnapshot = {
+    source,
+    entries: Array.isArray(entries) ? entries : [],
+  };
+
+  const src = el("historySource");
+  if (src) {
+    src.textContent = getHistorySourceLabel(source);
+    src.classList.toggle("cloud", source === "CLOUD");
+  }
+
+  syncHistoryRangeTabs();
+
+  const filtered = filterHistoryEntries(historySnapshot.entries, currentHistoryRange);
+  const days = getHistoryRangeDays(currentHistoryRange);
+  setText(
+    "historyFeedSub",
+    days
+      ? `Last ${days} days of sessions, grouped into real workdays.`
+      : "Your full session archive, grouped into real workdays.",
+  );
+  updateHistorySummary(filtered);
+  renderHistoryGroups(filtered);
+  updateHistoryPremiumState();
+}
+
+function bindHistoryEvents() {
+  loadHistoryQuickSites();
+
+  document.querySelectorAll(".history-range-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const nextRange = btn.dataset.range || "7d";
+      if (nextRange === currentHistoryRange) return;
+      currentHistoryRange = nextRange;
+      renderHistoryView(historySnapshot.source, historySnapshot.entries);
+    });
+  });
+
+  const customWrap = el("historyCustomWrap");
+  const durationChips = Array.from(document.querySelectorAll(".history-duration-chip"));
+  durationChips.forEach((chip) => {
+    chip.addEventListener("click", () => {
+      durationChips.forEach((node) => node.classList.remove("active"));
+      chip.classList.add("active");
+      if (customWrap) {
+        customWrap.style.display = chip.dataset.min === "custom" ? "inline-flex" : "none";
+      }
+    });
+  });
+
+  const moreSitesBtn = el("historyMoreSitesBtn");
+  if (moreSitesBtn) {
+    moreSitesBtn.addEventListener("click", () => activateDashboardTab("sites"));
+  }
+
+  const startBtn = el("historyStartBtn");
+  if (startBtn) {
+    startBtn.addEventListener("click", () => {
+      const activeChip = document.querySelector(".history-duration-chip.active");
+      const customMinutes = Math.max(
+        1,
+        Math.min(240, parseInt(el("historyCustomMinutes")?.value || "50", 10) || 50),
+      );
+      const duration =
+        activeChip?.dataset.min === "custom"
+          ? customMinutes
+          : Math.max(5, parseInt(activeChip?.dataset.min || "25", 10) || 25);
+      const intentInput = el("historyQuickIntent");
+      const intent = intentInput?.value.trim() || "";
+      const msg = el("historyQuickStartMsg");
+
+      if (!intent) {
+        if (msg) msg.textContent = "Add what you're working on before starting.";
+        if (intentInput) intentInput.focus();
+        return;
+      }
+
+      if (msg) msg.textContent = "";
+      startBtn.disabled = true;
+      getEnabledHistoryQuickDomains((selectedDomains) => {
+        if (!selectedDomains.length) {
+          startBtn.disabled = false;
+          if (msg) msg.textContent = "Enable at least one site before starting.";
+          return;
+        }
+        chrome.runtime.sendMessage(
+          {
+            action: "startBlock",
+            lockEndTime: Date.now() + duration * 60 * 1000,
+            duration,
+            intent,
+            energyLevel: null,
+            pinHash: null,
+            selectedBlockedDomains: selectedDomains,
+          },
+          (res) => {
+            startBtn.disabled = false;
+            if (res?.status === "ok") {
+              if (msg) msg.textContent = `Locked in for ${duration} minutes.`;
+              if (intentInput) intentInput.value = "";
+              return;
+            }
+            if (res?.status === "limit_reached") {
+              if (msg) msg.textContent = "Daily session limit reached on the current plan.";
+              return;
+            }
+            if (msg) msg.textContent = "Could not start a new session. Try again.";
+          },
+        );
+      });
+    });
+  }
+}
+
 // ================================
 // CHARTS
 // ================================
@@ -1365,21 +2704,20 @@ function buildSessionDayMap(log) {
 
 function populateOverview(data) {
   overviewSnapshot = data;
-
-  const weekMinutes = getWeekMinutes(data.daily);
-  const weekScore = Math.min(100, Math.round((weekMinutes / (OVERVIEW_DAILY_GOAL_MINUTES * 7)) * 100));
-  const delta = getOverviewDeltaSummary(data.daily, data.sessionDayMap);
+  updateOverviewPremiumState();
+  const summary = summarizeOverviewRange(currentOverviewRange, data);
+  const delta = getOverviewDeltaSummary(currentOverviewRange, data.daily, data.sessionDayMap);
   const bestDay = getBestDayDetails(data.daily);
   const averageSession = data.sessions > 0 ? Math.round(data.totalMins / data.sessions) : 0;
 
-  setText("ovTotalHours", `${data.totalHours}h`);
-  setText("ovTotalSessions", data.sessions);
-  setText("ovBlockedAttempts", data.blocked);
-  setText("ovCurrentStreak", `${data.streak}🔥`);
-  setText("ovWeekScore", weekScore);
-  setText("ovTodayMins", data.todayMins);
-  setText("ovTodaySessions", data.todayCount);
-  setText("ovTodayUrges", data.todayUrges);
+  setText("ovTotalHours", formatMinutes(summary.focusMinutes));
+  setText("ovTotalSessions", summary.sessions);
+  setText("ovBlockedAttempts", summary.blocked);
+  setText("ovCurrentStreak", `${data.streak}d`);
+  setText("ovWeekScore", summary.goalProgress);
+  setText("ovTodayMins", summary.focusMinutes);
+  setText("ovTodaySessions", summary.sessions);
+  setText("ovTodayUrges", summary.blocked);
   setText("ovLongestStreak", `${data.longest} days`);
   setText(
     "ovBestDay",
@@ -1390,54 +2728,114 @@ function populateOverview(data) {
   setText("ovAvgSession", averageSession > 0 ? `${averageSession} min` : "—");
   setText("ovTotalHoursAll", `${data.totalHours}h`);
   setText("ovTotalSessionsAll", data.sessions);
-  setText("ovTodayGoalLabel", `${data.todayMins} / ${OVERVIEW_DAILY_GOAL_MINUTES} min`);
-  setText("hoursDelta", delta.hours);
-  setText("sessionsDelta", delta.sessions);
-  setText("blockedDelta", delta.blocked);
-  setText("streakDelta", data.streak > 0 ? "Stay live" : "Start today");
+  setText("ovTodayGoalLabel", `${summary.focusMinutes} / ${summary.goalMinutes} min`);
+  setText("ovPulseTitle", summary.pulseTitle);
+  setText("ovGoalLabelTitle", summary.goalLabel);
+  setText("ovPsychLine", getOverviewPsychLine(summary, data));
+  setText("ovChartNote", summary.chartNote);
   setText("ovHoursDelta", delta.hours);
   setText("ovSessionsDelta", delta.sessions);
   setText("ovBlockedDelta", delta.blocked);
   setText("ovStreakDelta", data.streak > 0 ? "Stay live" : "Start today");
+  setText("ovRangeFocus", formatMinutes(summary.focusMinutes));
+  setText("ovRangeTarget", formatMinutes(summary.goalMinutes));
+  setText("ovRangeAverage", formatMinutes(summary.averageDaily));
+  setText("ovBalanceScore", `${summary.goalProgress}%`);
 
-  renderOverviewSessionChips(data.focusSessionLog, data.today);
-  renderOverviewGoalBar(data.todayMins);
+  renderOverviewSessionChips(data.focusSessionLog, summary.dateKeys, summary.label);
+  renderOverviewGoalBar(summary.focusMinutes, summary.goalMinutes);
+  renderOverviewBalance(summary);
   setOverviewDateRange(currentOverviewRange);
   renderOverviewChart(currentOverviewRange, data);
 }
 
-function renderOverviewGoalBar(todayMins) {
+function renderOverviewGoalBar(currentMinutes, goalMinutes) {
   const goalBar = el("ovGoalBar");
   if (!goalBar) return;
-  const progress = Math.min(100, (todayMins / OVERVIEW_DAILY_GOAL_MINUTES) * 100);
+  const progress = Math.min(100, (currentMinutes / Math.max(goalMinutes, 1)) * 100);
   goalBar.style.width = `${progress}%`;
-  goalBar.classList.toggle("done", todayMins >= OVERVIEW_DAILY_GOAL_MINUTES);
+  goalBar.classList.toggle("done", currentMinutes >= goalMinutes);
 }
 
-function renderOverviewSessionChips(log, todayKey) {
+function renderOverviewSessionChips(log, dateKeys, rangeLabel) {
   const container = el("ovSessionChips");
   if (!container) return;
+  const dateSet = new Set(dateKeys || []);
   const entries = (log || [])
-    .filter((entry) => (entry.date || "").startsWith(todayKey))
+    .filter((entry) => dateSet.has(String(entry.date || "").slice(0, 10)))
     .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0))
-    .slice(0, 3);
+    .slice(0, 4);
 
   if (!entries.length) {
-    container.innerHTML = '<div class="overview-session-empty">No completed sessions yet today.</div>';
+    container.innerHTML = `<div class="overview-session-empty">No completed sessions ${rangeLabel.toLowerCase()} yet.</div>`;
     return;
   }
 
   container.innerHTML = entries
     .map((entry) => {
       const intent = (entry.intent || "Focus").trim() || "Focus";
-      return `<div class="overview-session-chip"><span class="overview-chip-dot"></span>${escapeHtml(intent)} · ${entry.duration || 0}m</div>`;
+      return `<div class="overview-session-chip"><span class="overview-chip-dot"></span>${escapeHtml(intent)} / ${entry.duration || 0}m</div>`;
     })
     .join("");
 }
 
-function getOverviewDeltaSummary(daily, sessionDayMap) {
-  const currentDays = getRecentDateKeys(7, 0);
-  const previousDays = getRecentDateKeys(7, 7);
+function renderOverviewBalance(summary) {
+  if (typeof Chart === "undefined") return;
+  const canvas = el("overviewBalanceChart");
+  if (!canvas) return;
+
+  if (overviewBalanceChart) overviewBalanceChart.destroy();
+
+  const ctx = canvas.getContext("2d");
+  overviewBalanceChart = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: ["Completed", "Remaining"],
+      datasets: [
+        {
+          data: [
+            Math.max(summary.focusMinutes, 1),
+            Math.max(summary.goalMinutes - summary.focusMinutes, 1),
+          ],
+          backgroundColor: [
+            "rgba(59,130,246,0.9)",
+            "rgba(255,255,255,0.08)",
+          ],
+          borderColor: [
+            "rgba(15,23,42,0.95)",
+            "rgba(15,23,42,0.95)",
+          ],
+          borderWidth: 4,
+          hoverOffset: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: "76%",
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "#222226",
+          callbacks: {
+            label(context) {
+              return context.dataIndex === 0
+                ? ` Focused: ${formatMinutes(summary.focusMinutes)}`
+                : ` Remaining: ${formatMinutes(Math.max(summary.goalMinutes - summary.focusMinutes, 0))}`;
+            },
+          },
+        },
+      },
+      animation: { duration: 700, easing: "easeOutQuart" },
+    },
+  });
+}
+
+function getOverviewDeltaSummary(rangeKey, daily, sessionDayMap) {
+  const windowDays = getOverviewRangeDayCount(rangeKey);
+  const currentDays = getRecentDateKeys(windowDays, 0);
+  const previousDays = getRecentDateKeys(windowDays, windowDays);
 
   const currentFocus = currentDays.reduce((sum, key) => sum + (daily[key] || 0), 0);
   const previousFocus = previousDays.reduce((sum, key) => sum + (daily[key] || 0), 0);
@@ -1495,7 +2893,12 @@ function renderOverviewChart(rangeKey, data) {
   if (!canvas) return;
 
   const ctx = canvas.getContext("2d");
-  const rangeData = buildOverviewRangeData(rangeKey, data.daily, data.sessionDayMap);
+  const rangeData = buildOverviewRangeData(
+    rangeKey,
+    data.daily,
+    data.sessionDayMap,
+    data.focusSessionLog,
+  );
   const isLine = rangeData.type === "line";
 
   if (overviewChart) overviewChart.destroy();
@@ -1507,6 +2910,24 @@ function renderOverviewChart(rangeKey, data) {
   const blockedFill = ctx.createLinearGradient(0, 0, 0, 220);
   blockedFill.addColorStop(0, "rgba(249,115,22,0.24)");
   blockedFill.addColorStop(1, "rgba(249,115,22,0.02)");
+
+  const valueLabelsPlugin = {
+    id: "overviewValueLabels",
+    afterDatasetsDraw(chart) {
+      if (rangeData.labels.length > 8) return;
+      const { ctx: chartCtx } = chart;
+      const meta = chart.getDatasetMeta(0);
+      chartCtx.save();
+      chartCtx.font = "600 11px 'DM Sans'";
+      chartCtx.fillStyle = "#dbeafe";
+      chartCtx.textAlign = "center";
+      meta.data.forEach((point, index) => {
+        const value = Number(rangeData.focus[index]) || 0;
+        chartCtx.fillText(formatMinutes(value), point.x, Math.max(18, point.y - 10));
+      });
+      chartCtx.restore();
+    },
+  };
 
   overviewChart = new Chart(ctx, {
     type: isLine ? "line" : "bar",
@@ -1582,8 +3003,7 @@ function renderOverviewChart(rangeKey, data) {
             color: "#55555f",
             font: { family: "DM Sans", size: 11 },
             maxRotation: 0,
-            maxTicksLimit:
-              rangeKey === "1y" ? 12 : rangeKey === "6m" ? 6 : rangeKey === "1m" ? 10 : 7,
+            maxTicksLimit: rangeKey === "1y" ? 12 : rangeKey === "30d" ? 10 : 8,
           },
           border: { display: false },
         },
@@ -1610,11 +3030,41 @@ function renderOverviewChart(rangeKey, data) {
         },
       },
     },
+    plugins: [valueLabelsPlugin],
   });
 }
 
-function buildOverviewRangeData(rangeKey, daily, sessionDayMap) {
-  if (rangeKey === "7d" || rangeKey === "1m") {
+function buildOverviewRangeData(rangeKey, daily, sessionDayMap, focusSessionLog) {
+  if (rangeKey === "today") {
+    const todayKey = new Date().toISOString().split("T")[0];
+    const entries = (focusSessionLog || []).filter((entry) => (entry.date || "").startsWith(todayKey));
+    const hourMap = Array.from({ length: 8 }, (_, index) => ({
+      label: `${index * 3}:00`,
+      focus: 0,
+      blocked: 0,
+    }));
+
+    entries.forEach((entry) => {
+      const rawHour =
+        entry.hour !== undefined && entry.hour !== null
+          ? Number(entry.hour)
+          : entry.completedAt
+            ? new Date(entry.completedAt).getHours()
+            : 0;
+      const bucketIndex = Math.max(0, Math.min(7, Math.floor((rawHour || 0) / 3)));
+      hourMap[bucketIndex].focus += Number(entry.duration) || 0;
+      hourMap[bucketIndex].blocked += Number(entry.blockedAttempts) || 0;
+    });
+
+    return {
+      labels: hourMap.map((bucket, index) => (index === 7 ? "21:00+" : bucket.label)),
+      focus: hourMap.map((bucket) => bucket.focus),
+      blocked: hourMap.map((bucket) => bucket.blocked),
+      type: "bar",
+    };
+  }
+
+  if (rangeKey === "7d" || rangeKey === "30d") {
     const days = rangeKey === "7d" ? 7 : 30;
     const labels = [];
     const focus = [];
@@ -1629,16 +3079,16 @@ function buildOverviewRangeData(rangeKey, daily, sessionDayMap) {
           ? "Today"
           : date.toLocaleDateString("en-US", rangeKey === "7d"
               ? { weekday: "short" }
-              : { month: "numeric", day: "numeric" }),
+              : { month: "short", day: "numeric" }),
       );
       focus.push(daily[key] || 0);
       blocked.push(sessionDayMap[key]?.blockedAttempts || 0);
     }
 
-    return { labels, focus, blocked, type: "bar" };
+    return { labels, focus, blocked, type: rangeKey === "30d" ? "line" : "bar" };
   }
 
-  const months = rangeKey === "6m" ? 6 : 12;
+  const months = 12;
   const monthBuckets = [];
 
   for (let i = months - 1; i >= 0; i--) {
@@ -1745,14 +3195,37 @@ function renderHeatmap(daily) {
 // INSIGHTS
 // ================================
 function initInsightsTab() {
-  if (window.TEMP_BYPASS_PRO_FOR_TESTING) {
-    renderInsightsGate(true);
+  bindInsightsRangeTabs();
+  renderInsightsGate(true);
+  updateInsightsPremiumState();
+}
+
+function bindInsightsRangeTabs() {
+  document.querySelectorAll(".insights-range-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const nextRange = btn.dataset.range || "today";
+      if (nextRange === currentInsightsRange) return;
+      currentInsightsRange = nextRange;
+      refreshInsightsView();
+    });
+  });
+  syncInsightsRangeTabs();
+}
+
+function syncInsightsRangeTabs() {
+  document.querySelectorAll(".insights-range-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.range === currentInsightsRange);
+  });
+}
+
+function refreshInsightsView() {
+  syncInsightsRangeTabs();
+  const runner = () => loadInsightsData();
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(runner));
     return;
   }
-
-  chrome.storage.local.get(["isPro"], (data) => {
-    renderInsightsGate(!!data.isPro);
-  });
+  setTimeout(runner, 0);
 }
 
 function renderInsightsGate(isPro) {
@@ -1760,7 +3233,7 @@ function renderInsightsGate(isPro) {
   const content = el("insightsContent");
   if (!lock || !content) return;
 
-  lock.style.display = isPro ? "none" : "block";
+  lock.style.display = "none";
   content.classList.remove("is-locked");
 }
 
@@ -1824,6 +3297,173 @@ function getRecentDateKeys(daysBack) {
     keys.push(day.toISOString().split("T")[0]);
   }
   return keys;
+}
+
+function getDateKey(date) {
+  return date.toISOString().split("T")[0];
+}
+
+function shiftDate(baseDate, offsetDays) {
+  const next = new Date(baseDate);
+  next.setDate(next.getDate() + offsetDays);
+  return next;
+}
+
+function getLast365DateKeys() {
+  return getRecentDateKeys(365);
+}
+
+function getInsightsRangeMeta(rangeKey) {
+  if (rangeKey === "7d") {
+    return {
+      badge: "LAST 7 DAYS",
+      summary: "Your last 7 days at a glance",
+      chartSubtitle: "Daily tracked time for the last 7 days",
+      sitesSubtitle: "Top 5 by time spent in the last 7 days",
+      emptyText: "No tracked browsing in the last 7 days yet.",
+      periodLabel: "in the last 7 days",
+      shareLabel: "Share your week",
+    };
+  }
+  if (rangeKey === "30d") {
+    return {
+      badge: "LAST 30 DAYS",
+      summary: "Your last 30 days at a glance",
+      chartSubtitle: "Tracked time grouped across the last 30 days",
+      sitesSubtitle: "Top 5 by time spent in the last 30 days",
+      emptyText: "No tracked browsing in the last 30 days yet.",
+      periodLabel: "in the last 30 days",
+      shareLabel: "Share your month",
+    };
+  }
+  if (rangeKey === "1y") {
+    return {
+      badge: "LAST 12 MONTHS",
+      summary: "Your last 12 months at a glance",
+      chartSubtitle: "Monthly tracked time for the last 12 months",
+      sitesSubtitle: "Top 5 by time spent in the last 12 months",
+      emptyText: "No tracked browsing in the last 12 months yet.",
+      periodLabel: "in the last 12 months",
+      shareLabel: "Share your year",
+    };
+  }
+  return {
+    badge: "TODAY",
+    summary: "Today at a glance",
+    chartSubtitle: "Tracked time for today",
+    sitesSubtitle: "Top 5 by time spent today",
+    emptyText: "No tracked browsing yet today.",
+    periodLabel: "today",
+    shareLabel: "Share today",
+  };
+}
+
+function getInsightsRangeDateKeys(rangeKey) {
+  if (rangeKey === "1y") return getLast365DateKeys();
+  if (rangeKey === "30d") return getRecentDateKeys(30);
+  if (rangeKey === "7d") return getRecentDateKeys(7);
+  return [getDateKey(new Date())];
+}
+
+function aggregateSiteUsageByKeys(siteUsage, dateKeys) {
+  const aggregate = {};
+  dateKeys.forEach((dateKey) => {
+    const sites = getTrackedDayUsage(siteUsage, dateKey);
+    Object.entries(sites).forEach(([domain, mins]) => {
+      aggregate[domain] = (aggregate[domain] || 0) + (Number(mins) || 0);
+    });
+  });
+  return aggregate;
+}
+
+function getTotalSiteMinutes(siteMap) {
+  return Object.values(siteMap || {}).reduce(
+    (sum, mins) => sum + (Number(mins) || 0),
+    0,
+  );
+}
+
+function formatShortDate(date) {
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function buildInsightsTrendData(siteUsage, rangeKey) {
+  if (rangeKey === "today") {
+    const today = new Date();
+    const key = getDateKey(today);
+    return [
+      {
+        key,
+        shortLabel: "Today",
+        total: getTotalSiteMinutes(getTrackedDayUsage(siteUsage, key)),
+      },
+    ];
+  }
+
+  if (rangeKey === "7d") {
+    return getRecentDateKeys(7).map((key, index) => {
+      const date = new Date(key);
+      return {
+        key,
+        shortLabel:
+          index === 6
+            ? "Today"
+            : date.toLocaleDateString("en-US", { weekday: "short" }),
+        total: getTotalSiteMinutes(getTrackedDayUsage(siteUsage, key)),
+      };
+    });
+  }
+
+  if (rangeKey === "30d") {
+    const today = new Date();
+    const buckets = [];
+    for (let startOffset = 29; startOffset >= 0; startOffset -= 5) {
+      const start = shiftDate(today, -startOffset);
+      const span = Math.min(5, startOffset + 1);
+      const keys = [];
+      for (let i = 0; i < span; i++) {
+        keys.push(getDateKey(shiftDate(start, i)));
+      }
+      const end = shiftDate(start, span - 1);
+      buckets.push({
+        key: `${getDateKey(start)}_${getDateKey(end)}`,
+        shortLabel: `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${end.toLocaleDateString("en-US", { day: "numeric" })}`,
+        total: keys.reduce(
+          (sum, dateKey) => sum + getTotalSiteMinutes(getTrackedDayUsage(siteUsage, dateKey)),
+          0,
+        ),
+      });
+    }
+    return buckets;
+  }
+
+  const months = [];
+  const now = new Date();
+  for (let i = 11; i >= 0; i--) {
+    const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+    let total = 0;
+    Object.keys(siteUsage || {}).forEach((dateKey) => {
+      const date = new Date(dateKey);
+      if (date >= monthDate && date < nextMonth) {
+        total += getTotalSiteMinutes(getTrackedDayUsage(siteUsage, dateKey));
+      }
+    });
+    months.push({
+      key: `${monthDate.getFullYear()}-${monthDate.getMonth() + 1}`,
+      shortLabel: monthDate.toLocaleDateString("en-US", { month: "short" }),
+      total,
+    });
+  }
+  return months;
+}
+
+function filterSessionLogByDateKeys(sessionLog, dateKeys) {
+  const dateSet = new Set(dateKeys);
+  return (sessionLog || []).filter((entry) => {
+    if (!entry?.date) return false;
+    return dateSet.has(String(entry.date).slice(0, 10));
+  });
 }
 
 function sumDistractingMinutes(siteMap) {
@@ -1898,26 +3538,6 @@ function computeLifeImpact(siteUsage) {
   };
 }
 
-function getLast7DaysUsage(siteUsage) {
-  const days = [];
-  for (let i = 6; i >= 0; i--) {
-    const day = new Date();
-    day.setDate(day.getDate() - i);
-    const key = day.toISOString().split("T")[0];
-    const sites = getTrackedDayUsage(siteUsage, key);
-    const total = Object.values(sites).reduce(
-      (sum, mins) => sum + (Number(mins) || 0),
-      0,
-    );
-    days.push({
-      key,
-      shortLabel: i === 0 ? "Today" : day.toLocaleDateString("en-US", { weekday: "short" }),
-      total,
-    });
-  }
-  return days;
-}
-
 function formatHour(hour) {
   if (hour === null || hour === undefined || Number.isNaN(hour)) return "--";
   const suffix = hour >= 12 ? "PM" : "AM";
@@ -1955,9 +3575,10 @@ function getFocusPatterns(sessionLog) {
   };
 }
 
-function bindInsightsShare(insights, patterns) {
+function bindInsightsShare(insights, patterns, rangeMeta) {
   const btn = el("insightsShareBtn");
   if (!btn) return;
+  btn.textContent = rangeMeta.shareLabel;
 
   btn.onclick = () => {
     const canvas = document.createElement("canvas");
@@ -1974,7 +3595,7 @@ function bindInsightsShare(insights, patterns) {
 
     ctx.fillStyle = "#8ef0ad";
     ctx.font = "700 30px Space Mono";
-    ctx.fillText("DEEPLOCK WEEK", 90, 120);
+    ctx.fillText(`DEEPLOCK ${rangeMeta.badge}`, 90, 120);
 
     ctx.fillStyle = "#f8fafc";
     ctx.font = "700 84px Space Mono";
@@ -1988,7 +3609,7 @@ function bindInsightsShare(insights, patterns) {
     ctx.fillText(formatMinutes(insights.focusTime), 90, 500);
     ctx.font = "500 28px DM Sans";
     ctx.fillStyle = "#94a3b8";
-    ctx.fillText("Focused today", 90, 545);
+    ctx.fillText(rangeMeta.summary, 90, 545);
 
     ctx.fillStyle = "#f8fafc";
     ctx.font = "700 56px Space Mono";
@@ -2022,9 +3643,34 @@ function renderInsightsTrendChart(days) {
   if (insightsTrendChart) insightsTrendChart.destroy();
 
   const ctx = canvas.getContext("2d");
-  const gradient = ctx.createLinearGradient(0, 0, 0, 240);
+  const gradient = ctx.createLinearGradient(0, 0, 0, 320);
   gradient.addColorStop(0, "rgba(59,130,246,0.78)");
   gradient.addColorStop(1, "rgba(59,130,246,0.18)");
+
+  const maxBarThickness =
+    days.length <= 1 ? 110 : days.length <= 6 ? 72 : days.length <= 12 ? 46 : 28;
+
+  const valueLabelsPlugin = {
+    id: "insightsValueLabels",
+    afterDatasetsDraw(chart) {
+      const { ctx: chartCtx } = chart;
+      const meta = chart.getDatasetMeta(0);
+      const data = chart.data.datasets[0].data || [];
+      chartCtx.save();
+      chartCtx.font = "600 11px 'DM Sans'";
+      chartCtx.textAlign = "center";
+      meta.data.forEach((bar, index) => {
+        const value = Number(data[index]) || 0;
+        chartCtx.fillStyle = value > 0 ? "#dbeafe" : "#6b7280";
+        chartCtx.fillText(
+          formatMinutes(value),
+          bar.x,
+          Math.max(18, bar.y - 8),
+        );
+      });
+      chartCtx.restore();
+    },
+  };
 
   insightsTrendChart = new Chart(ctx, {
     type: "bar",
@@ -2039,7 +3685,7 @@ function renderInsightsTrendChart(days) {
           borderWidth: 1,
           borderRadius: 8,
           borderSkipped: false,
-          maxBarThickness: 38,
+          maxBarThickness,
         },
       ],
     },
@@ -2091,16 +3737,16 @@ function renderInsightsTrendChart(days) {
         },
       },
     },
+    plugins: [valueLabelsPlugin],
   });
 }
 
-function renderInsightsTopSites(topSites, totalTime) {
+function renderInsightsTopSites(topSites, totalTime, emptyText) {
   const list = el("insightsTopSites");
   if (!list) return;
 
   if (!topSites.length) {
-    list.innerHTML =
-      '<div class="insights-empty">No tracked browsing yet today. Open a few sites and DeepLock will start learning your pattern.</div>';
+    list.innerHTML = `<div class="insights-empty">${emptyText} Open a few sites and DeepLock will start learning your pattern.</div>`;
     return;
   }
 
@@ -2263,7 +3909,14 @@ function renderInsights(insights, allUsage, sessionLog, streak, isPro) {
     biggestSite,
   } = insights;
 
-  setText("insightsRange", "TODAY");
+  const rangeMeta = getInsightsRangeMeta(currentInsightsRange);
+  const dateKeys = getInsightsRangeDateKeys(currentInsightsRange);
+  const filteredSessions = filterSessionLogByDateKeys(sessionLog || [], dateKeys);
+
+  setText("insightsRange", rangeMeta.badge);
+  setText("insightsSummarySub", rangeMeta.summary);
+  setText("insightsChartSubtitle", rangeMeta.chartSubtitle);
+  setText("insightsSitesSub", rangeMeta.sitesSubtitle);
   setText("insightsTotalTime", `${formatMinutes(totalTime)} total`);
   setText("insightsFocusTime", formatMinutes(focusTime));
   setText("insightsDistractingTime", formatMinutes(distractingTime));
@@ -2282,13 +3935,13 @@ function renderInsights(insights, allUsage, sessionLog, streak, isPro) {
   const scoreSub = el("insightsScoreSub");
   if (scoreSub) {
     if (totalTime <= 0) {
-      scoreSub.textContent = "No tracked website time yet today.";
+      scoreSub.textContent = `No tracked website time ${rangeMeta.periodLabel}.`;
     } else if (focusScore >= 70) {
-      scoreSub.textContent = "Strong day so far. Your focused browsing is winning.";
+      scoreSub.textContent = `Strong performance ${rangeMeta.periodLabel}. Your focused browsing is winning.`;
     } else if (focusScore >= 40) {
-      scoreSub.textContent = "Mixed signal. A few distractions are eating into your day.";
+      scoreSub.textContent = `Mixed signal ${rangeMeta.periodLabel}. A few distractions are eating into your time.`;
     } else {
-      scoreSub.textContent = "Heavy distraction day so far. Time to tighten the loop.";
+      scoreSub.textContent = `Heavy distraction ${rangeMeta.periodLabel}. Time to tighten the loop.`;
     }
   }
 
@@ -2300,7 +3953,7 @@ function renderInsights(insights, allUsage, sessionLog, streak, isPro) {
   if (focusBar) focusBar.style.width = `${focusPct}%`;
   if (distractBar) distractBar.style.width = `${distractPct}%`;
 
-  const patterns = getFocusPatterns(sessionLog || []);
+  const patterns = getFocusPatterns(filteredSessions);
   setText(
     "insightsPeakHour",
     patterns.peakHour !== null
@@ -2318,33 +3971,41 @@ function renderInsights(insights, allUsage, sessionLog, streak, isPro) {
   if (messageEl) {
     if (!biggestSite) {
       messageEl.textContent =
-        "No browsing data yet today. DeepLock will build this view as soon as you spend time on websites.";
+        `No browsing data ${rangeMeta.periodLabel}. DeepLock will build this view as soon as you spend time on websites.`;
     } else if (isDistractingDomain(biggestSite.domain)) {
-      messageEl.textContent = `Your biggest distraction was ${biggestSite.domain} (${formatMinutes(biggestSite.mins)}) today.`;
+      messageEl.textContent = `Your biggest distraction ${rangeMeta.periodLabel} was ${biggestSite.domain} at ${formatMinutes(biggestSite.mins)}.`;
     } else {
-      messageEl.textContent = `You spent ${formatMinutes(biggestSite.mins)} on ${biggestSite.domain} today.`;
+      messageEl.textContent = `You spent ${formatMinutes(biggestSite.mins)} on ${biggestSite.domain} ${rangeMeta.periodLabel}.`;
     }
   }
 
-  renderInsightsTrendChart(getLast7DaysUsage(allUsage || {}));
-  renderInsightsTopSites(topSites, totalTime);
+  renderInsightsTrendChart(buildInsightsTrendData(allUsage || {}, currentInsightsRange));
+  renderInsightsTopSites(topSites, totalTime, rangeMeta.emptyText);
   renderLifeImpact(computeLifeImpact(allUsage || {}), !!isPro);
-  bindInsightsShare(insights, { ...patterns, streak });
+  bindInsightsShare(insights, { ...patterns, streak }, rangeMeta);
+  updateInsightsPremiumState();
 }
 
 function loadInsightsData() {
-  if (window.TEMP_BYPASS_PRO_FOR_TESTING) {
+  if (TEMP_DASHBOARD_BOOTSTRAP) {
     chrome.storage.local.get(["siteUsage", "focusSessionLog", "currentStreak"], (data) => {
-      renderInsightsGate(true);
-      const today = new Date().toISOString().split("T")[0];
-      const usage = getTrackedDayUsage(data.siteUsage || {}, today);
-      renderInsights(
-        computeInsights(usage),
-        data.siteUsage || {},
-        data.focusSessionLog || [],
-        data.currentStreak || 0,
-        true,
-      );
+      try {
+        chrome.storage.local.get(["isPro"], (proData) => {
+          const isPro = !!proData.isPro;
+          renderInsightsGate(isPro);
+          const rangeKeys = getInsightsRangeDateKeys(currentInsightsRange);
+          const usage = aggregateSiteUsageByKeys(data.siteUsage || {}, rangeKeys);
+          renderInsights(
+            computeInsights(usage),
+            data.siteUsage || {},
+            data.focusSessionLog || [],
+            data.currentStreak || 0,
+            isPro,
+          );
+        });
+      } catch (error) {
+        console.error("[DeepLock Insights] render failed", error);
+      }
     });
     return;
   }
@@ -2352,18 +4013,21 @@ function loadInsightsData() {
   chrome.storage.local.get(
     ["isPro", "siteUsage", "focusSessionLog", "currentStreak"],
     (data) => {
-    const isPro = !!data.isPro;
-    renderInsightsGate(isPro);
-
-    const today = new Date().toISOString().split("T")[0];
-    const usage = getTrackedDayUsage(data.siteUsage || {}, today);
-      renderInsights(
-        computeInsights(usage),
-        data.siteUsage || {},
-        data.focusSessionLog || [],
-        data.currentStreak || 0,
-        isPro,
-      );
+      try {
+        const isPro = !!data.isPro;
+        renderInsightsGate(isPro);
+        const rangeKeys = getInsightsRangeDateKeys(currentInsightsRange);
+        const usage = aggregateSiteUsageByKeys(data.siteUsage || {}, rangeKeys);
+        renderInsights(
+          computeInsights(usage),
+          data.siteUsage || {},
+          data.focusSessionLog || [],
+          data.currentStreak || 0,
+          isPro,
+        );
+      } catch (error) {
+        console.error("[DeepLock Insights] render failed", error);
+      }
     },
   );
 }
@@ -2385,7 +4049,20 @@ function bindTabNav() {
   if (hashTab) activateDashboardTab(hashTab);
 }
 
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local") return;
+  if (
+    changes.isLocked ||
+    changes.lockEndTime ||
+    changes.focusIntent ||
+    changes.blockedDomains
+  ) {
+    checkActiveSession();
+  }
+});
+
 function activateDashboardTab(tab) {
+  const mainEl = document.querySelector(".main");
   document
     .querySelectorAll(".nav-item")
     .forEach((n) => n.classList.toggle("active", n.dataset.tab === tab));
@@ -2394,36 +4071,97 @@ function activateDashboardTab(tab) {
     .forEach((t) => t.classList.remove("active"));
   const tabEl = el(`tab-${tab}`);
   if (tabEl) tabEl.classList.add("active");
+  if (mainEl)
+    mainEl.classList.toggle(
+      "insights-wide",
+      tab === "overview" ||
+        tab === "insights" ||
+        tab === "sites" ||
+        tab === "schedule",
+    );
   if (tab === "schedule") maybeInitScheduleTab();
-  if (tab === "insights") loadInsightsData();
+  if (tab === "insights") refreshInsightsView();
 }
 
 // ================================
 // ACTIVE SESSION
 // ================================
 function checkActiveSession() {
-  chrome.storage.local.get(["isLocked", "lockEndTime"], (data) => {
+  if (activeSessionInterval) {
+    clearInterval(activeSessionInterval);
+    activeSessionInterval = null;
+  }
+
+  chrome.storage.local.get(
+    ["isLocked", "lockEndTime", "focusIntent", "blockedDomains"],
+    (data) => {
     const dot = el("statusDot");
     const label = el("statusLabel");
+    const banner = el("activeSessionBanner");
+    const intentEl = el("activeSessionIntent");
+    const metaEl = el("activeSessionMeta");
+    const countEl = el("activeSessionSitesCount");
+    const rowEl = el("activeSessionSitesRow");
     if (!dot || !label) return;
     if (data.isLocked && data.lockEndTime > Date.now()) {
       dot.classList.add("active");
       const endTime = data.lockEndTime;
+      const blockedDomains = Array.isArray(data.blockedDomains)
+        ? data.blockedDomains
+        : [];
+      const siteNames = [...new Set(blockedDomains.map((entry) => getBlockedSiteName(entry)).filter(Boolean))];
+
+      if (banner) banner.style.display = "grid";
+      if (intentEl) intentEl.textContent = data.focusIntent || "Deep work";
+      if (countEl) {
+        countEl.textContent = `${siteNames.length} site${siteNames.length === 1 ? "" : "s"} enabled`;
+      }
+      if (rowEl) {
+        const visibleSites = siteNames.slice(0, 4);
+        const remaining = Math.max(0, siteNames.length - visibleSites.length);
+        rowEl.innerHTML = visibleSites
+          .map(
+            (name) =>
+              `<span class="active-session-site-chip">${name}</span>`,
+          )
+          .join("");
+        if (remaining > 0) {
+          rowEl.innerHTML += `<button class="active-session-more-btn" id="activeSessionMoreBtn" type="button">+${remaining} more</button>`;
+        }
+        const moreBtn = el("activeSessionMoreBtn");
+        if (moreBtn) {
+          moreBtn.addEventListener("click", () => activateDashboardTab("sites"));
+        }
+      }
+
       function update() {
         const r = Math.max(0, endTime - Date.now());
         const m = Math.floor(r / 60000);
         const s = Math.floor((r % 60000) / 1000);
-        label.textContent =
+        const timerLabel =
           r > 0
             ? `${m}:${s.toString().padStart(2, "0")} left`
             : "Session ended";
-        if (r <= 0) clearInterval(iv);
+        label.textContent =
+          timerLabel;
+        if (metaEl) {
+          metaEl.textContent =
+            r > 0
+              ? `${timerLabel} • ${siteNames.length} blocked right now`
+              : "Session ended";
+        }
+        if (r <= 0) {
+          clearInterval(activeSessionInterval);
+          activeSessionInterval = null;
+          setTimeout(() => checkActiveSession(), 300);
+        }
       }
       update();
-      const iv = setInterval(update, 1000);
+      activeSessionInterval = setInterval(update, 1000);
     } else {
       dot.classList.remove("active");
       label.textContent = "No active session";
+      if (banner) banner.style.display = "none";
     }
   });
 }
@@ -2431,6 +4169,107 @@ function checkActiveSession() {
 // ================================
 // SCHEDULE TAB
 // ================================
+
+function getScheduleAccessState(callback) {
+  chrome.storage.local.get(["isPro", "sbSignedIn"], (data) => {
+    callback({
+      isPro: !!data.isPro,
+      isSignedIn: !!data.sbSignedIn,
+    });
+  });
+}
+
+function routeToSchedulePremium(state = { isPro: false, isSignedIn: false }) {
+  if (!state.isSignedIn) {
+    activateDashboardTab("profile");
+    setText("dashAuthStatus", "Sign in to unlock DeepLock Pro scheduling.");
+    return;
+  }
+  window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+}
+
+function updateSchedulePremiumState() {
+  getScheduleAccessState((state) => {
+    const repeatInput = el("schedRepeat");
+    const customMode = document.querySelector('input[name="schedSiteMode"][value="custom"]');
+    const note = el("schedPremiumNote");
+    const hint = el("schedUpgradeHint");
+
+    if (repeatInput) {
+      Array.from(repeatInput.options).forEach((option) => {
+        option.disabled = !state.isPro && option.value !== "none";
+      });
+      if (!state.isPro && repeatInput.value !== "none") {
+        repeatInput.value = "none";
+      }
+    }
+
+    if (customMode) {
+      customMode.disabled = !state.isPro;
+      if (!state.isPro && customMode.checked) {
+        const currentMode = document.querySelector('input[name="schedSiteMode"][value="current"]');
+        if (currentMode) currentMode.checked = true;
+        chrome.storage.local.set({ [SCHEDULE_SITE_MODE_KEY]: "current" }, () => {
+          updateScheduleSiteModeUI("current");
+          updateSchedulePreview();
+        });
+      }
+    }
+
+    if (note) {
+      note.textContent = state.isPro
+        ? "Pro scheduling is active. Repeats, custom site sets, multiple upcoming sessions, and sync are all unlocked."
+        : "Free includes one upcoming one-time schedule. Pro unlocks repeats, custom site sets, multiple upcoming schedules, and sync.";
+    }
+    if (hint) {
+      hint.textContent = state.isPro
+        ? "Synced across your signed-in DeepLock installs."
+        : "Pro unlocks repeating routines, custom schedule sites, and schedule sync.";
+    }
+  });
+}
+
+function updateSchedulePreview() {
+  const dateInput = el("schedDate");
+  const timeInput = el("schedTime");
+  const durInput = el("schedDuration");
+  const repeatInput = el("schedRepeat");
+  const previewEl = el("schedPreview");
+  const d = dateInput?.value;
+  const t = timeInput?.value;
+  const dur = durInput?.value;
+  const rep = repeatInput?.value;
+
+  if (!d || !t || !dur) {
+    if (previewEl) previewEl.textContent = "-";
+    return;
+  }
+
+  const dt = new Date(`${d}T${t}`);
+  const dayName = dt.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  });
+  const durNum = parseInt(dur, 10) || 0;
+  const durLabel = durNum >= 60 ? `${durNum / 60}h` : `${durNum}m`;
+  const repLabel = rep === "none" ? "" : ` · Repeats ${rep}`;
+
+  chrome.storage.local.get([SCHEDULE_SITE_MODE_KEY, SCHEDULE_SITE_DRAFT_KEY], (data) => {
+    const mode = data[SCHEDULE_SITE_MODE_KEY] === "custom" ? "custom" : "current";
+    const stored = Array.isArray(data[SCHEDULE_SITE_DRAFT_KEY])
+      ? data[SCHEDULE_SITE_DRAFT_KEY]
+      : getDefaultScheduleSiteDraft();
+    const selectedCount = stored.filter((site) => site.enabled).length;
+    const siteLabel =
+      mode === "custom"
+        ? ` · ${selectedCount} custom site${selectedCount === 1 ? "" : "s"}`
+        : " · current block list";
+    if (previewEl) {
+      previewEl.textContent = `🔒 ${dayName} at ${timeInput.value} — ${durLabel}${repLabel}${siteLabel}`;
+    }
+  });
+}
 
 function initScheduleTab() {
   const dateInput = el("schedDate");
@@ -2452,7 +4291,7 @@ function initScheduleTab() {
     const dur = durInput?.value;
     const rep = repeatInput?.value;
     if (!d || !t || !dur) {
-      setText("schedPreview", "—");
+      setText("schedPreview", "-");
       return;
     }
 
@@ -2471,23 +4310,102 @@ function initScheduleTab() {
   }
 
   [dateInput, timeInput, durInput, repeatInput].forEach((i) => {
-    if (i) i.addEventListener("change", updatePreview);
+    if (i) i.addEventListener("change", updateSchedulePreview);
   });
-  updatePreview();
+
+  if (repeatInput) {
+    repeatInput.addEventListener("change", () => {
+      getScheduleAccessState((state) => {
+        if (state.isPro || repeatInput.value === "none") return;
+        repeatInput.value = "none";
+        updateSchedulePreview();
+        routeToSchedulePremium(state);
+      });
+    });
+  }
+
+  const siteModeGroup = el("schedSiteModeGroup");
+  if (siteModeGroup) {
+    siteModeGroup.querySelectorAll('input[name="schedSiteMode"]').forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.value === "custom") {
+          getScheduleAccessState((state) => {
+            if (state.isPro) {
+              const mode = "custom";
+              chrome.storage.local.set({ [SCHEDULE_SITE_MODE_KEY]: mode }, () => {
+                updateScheduleSiteModeUI(mode);
+                updateSchedulePreview();
+              });
+              return;
+            }
+            input.checked = false;
+            const currentMode = siteModeGroup.querySelector('input[name="schedSiteMode"][value="current"]');
+            if (currentMode) currentMode.checked = true;
+            chrome.storage.local.set({ [SCHEDULE_SITE_MODE_KEY]: "current" }, () => {
+              updateScheduleSiteModeUI("current");
+              updateSchedulePreview();
+            });
+            routeToSchedulePremium(state);
+          });
+          return;
+        }
+        const mode = input.value === "custom" ? "custom" : "current";
+        chrome.storage.local.set({ [SCHEDULE_SITE_MODE_KEY]: mode }, () => {
+          updateScheduleSiteModeUI(mode);
+          updateSchedulePreview();
+        });
+      });
+    });
+  }
+
+  const moreSitesBtn = el("schedSitesMoreBtn");
+  if (moreSitesBtn) {
+    moreSitesBtn.addEventListener("click", () => {
+      getScheduleAccessState((state) => {
+        if (!state.isPro) {
+          routeToSchedulePremium(state);
+          return;
+        }
+        activateDashboardTab("sites");
+      });
+    });
+  }
+
+  loadScheduleSiteDraft();
+  updateSchedulePremiumState();
+  updateSchedulePreview();
 
   const createBtn = el("schedCreateBtn");
   if (createBtn) createBtn.addEventListener("click", createSchedule);
 
-  // Test button + debug close
-  bindScheduleTestBtn();
-  const debugClose = el("schedDebugClose");
-  if (debugClose)
-    debugClose.addEventListener("click", () => {
-      const panel = el("schedDebugPanel");
-      if (panel) panel.style.display = "none";
-    });
-
   loadSchedules();
+}
+
+function formatScheduleRepeatLabel(repeat) {
+  if (repeat === "weekdays") return "weekdays";
+  if (repeat === "weekends") return "weekends";
+  if (repeat === "weekly") return "weekly";
+  if (repeat === "daily") return "daily";
+  return "one time";
+}
+
+function getScheduleTimestamp(schedule) {
+  if (!schedule) return Number.NaN;
+  if (Number.isFinite(schedule.scheduledMs)) return schedule.scheduledMs;
+  const raw = schedule.scheduledAt || schedule.scheduled_at;
+  if (!raw) return Number.NaN;
+  return new Date(raw).getTime();
+}
+
+function toLocalDateTimeValue(value) {
+  const dt = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  if (Number.isNaN(dt.getTime())) return "";
+  const year = dt.getFullYear();
+  const month = String(dt.getMonth() + 1).padStart(2, "0");
+  const day = String(dt.getDate()).padStart(2, "0");
+  const hours = String(dt.getHours()).padStart(2, "0");
+  const minutes = String(dt.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 async function createSchedule() {
@@ -2496,8 +4414,12 @@ async function createSchedule() {
   const time = el("schedTime")?.value;
   const duration = parseInt(el("schedDuration")?.value || "60");
   const repeat = el("schedRepeat")?.value || "none";
+  const siteMode =
+    document.querySelector('input[name="schedSiteMode"]:checked')?.value === "custom"
+      ? "custom"
+      : "current";
 
-  schedDebug("── createSchedule called ──");
+  schedDebug("createSchedule called");
   schedDebug(
     `intent="${intent}" date="${date}" time="${time}" dur=${duration} repeat="${repeat}"`,
   );
@@ -2527,6 +4449,57 @@ async function createSchedule() {
     return;
   }
 
+  const scheduleAccess = await new Promise((resolve) => {
+    getScheduleAccessState(resolve);
+  });
+  if (!scheduleAccess.isPro && repeat !== "none") {
+    showSchedFeedback("Repeating schedules are part of DeepLock Pro.", "error");
+    routeToSchedulePremium(scheduleAccess);
+    return;
+  }
+  if (!scheduleAccess.isPro && siteMode === "custom") {
+    showSchedFeedback("Custom site sets per schedule are part of DeepLock Pro.", "error");
+    routeToSchedulePremium(scheduleAccess);
+    return;
+  }
+
+  const existingScheduleStore = await chrome.storage.local.get(["schedules"]);
+  const existingUpcomingCount = (existingScheduleStore.schedules || [])
+    .filter((item) => item.active !== false)
+    .filter((item) => {
+      if (item.repeat && item.repeat !== "none") return true;
+      return getScheduleTimestamp(item) > Date.now();
+    }).length;
+  if (!scheduleAccess.isPro && existingUpcomingCount >= 1) {
+    showSchedFeedback("Free plan supports one upcoming one-time schedule.", "error");
+    routeToSchedulePremium(scheduleAccess);
+    return;
+  }
+
+  const scheduleDraftStore = await chrome.storage.local.get([SCHEDULE_SITE_DRAFT_KEY]);
+  const draftSites = Array.isArray(scheduleDraftStore[SCHEDULE_SITE_DRAFT_KEY])
+    ? scheduleDraftStore[SCHEDULE_SITE_DRAFT_KEY]
+    : getDefaultScheduleSiteDraft();
+  const blockedDomainsSnapshot = draftSites
+    .filter((site) => site.enabled)
+    .flatMap((site) =>
+      (Array.isArray(site.filters) && site.filters.length ? site.filters : [site.filter])
+        .filter(Boolean)
+        .map((filter) => ({
+          name: site.name,
+          filter,
+          domain:
+            filter === "||twitter.com^" && site.domain === "x.com"
+              ? "twitter.com"
+              : site.domain,
+        })),
+    );
+
+  if (siteMode === "custom" && !blockedDomainsSnapshot.length) {
+    showSchedFeedback("Enable at least one custom site for this schedule.", "error");
+    return;
+  }
+
   const createBtn = el("schedCreateBtn");
   if (createBtn) {
     createBtn.disabled = true;
@@ -2550,6 +4523,8 @@ async function createSchedule() {
       scheduledMs,
       duration,
       repeat,
+      siteMode,
+      blockedDomainsSnapshot: siteMode === "custom" ? blockedDomainsSnapshot : [],
       active: true,
     };
     schedDebug(`id=${id}`);
@@ -2559,7 +4534,7 @@ async function createSchedule() {
     const schedules = local.schedules || [];
     schedules.push({ ...schedule, synced: false });
     await chrome.storage.local.set({ schedules });
-    schedDebug(`✓ Local storage saved (${schedules.length} total)`);
+    schedDebug(`Local storage saved (${schedules.length} total)`);
 
     // STEP 2: Register alarm via background — use scheduledMs directly
     const alarmResponse = await new Promise((resolve) => {
@@ -2575,11 +4550,11 @@ async function createSchedule() {
         },
       );
     });
-    schedDebug(`✓ Alarm: ${JSON.stringify(alarmResponse)}`);
+    schedDebug(`Alarm response: ${JSON.stringify(alarmResponse)}`);
 
     // STEP 3: Show success
     showSchedFeedback(
-      "✓ Scheduled! DeepLock will auto-lock at that time.",
+      "Scheduled. DeepLock will auto-lock at that time.",
       "success",
     );
     resetBtn();
@@ -2588,26 +4563,30 @@ async function createSchedule() {
     loadSchedules();
 
     // STEP 4: Supabase in background — never blocks UI
-    saveSchedule({
-      ...schedule,
-      scheduledAt: new Date(scheduledMs).toISOString(),
-    })
-      .then((result) => {
-        schedDebug(
-          `Supabase: ok=${result.ok}${result.reason ? " reason=" + result.reason : ""}${result.error ? " error=" + result.error : ""}`,
-        );
-        if (result.ok) {
-          chrome.storage.local.get(["schedules"], (d) => {
-            const updated = (d.schedules || []).map((s) =>
-              s.id === id ? { ...s, synced: true } : s,
-            );
-            chrome.storage.local.set({ schedules: updated });
-          });
-        }
+    if (scheduleAccess.isPro) {
+      saveSchedule({
+        ...schedule,
+        scheduledAt: new Date(scheduledMs).toISOString(),
       })
-      .catch((e) => schedDebug(`Supabase error (non-fatal): ${e.message}`));
+        .then((result) => {
+          schedDebug(
+            `Supabase: ok=${result.ok}${result.reason ? " reason=" + result.reason : ""}${result.error ? " error=" + result.error : ""}`,
+          );
+          if (result.ok) {
+            chrome.storage.local.get(["schedules"], (d) => {
+              const updated = (d.schedules || []).map((s) =>
+                s.id === id ? { ...s, synced: true } : s,
+              );
+              chrome.storage.local.set({ schedules: updated });
+            });
+          }
+        })
+        .catch((e) => schedDebug(`Supabase error (non-fatal): ${e.message}`));
+    } else {
+      schedDebug("Supabase sync skipped on free plan");
+    }
   } catch (e) {
-    schedDebug(`✗ createSchedule error: ${e.message}`);
+    schedDebug(`createSchedule error: ${e.message}`);
     showSchedFeedback("Something went wrong. Check console.", "error");
     resetBtn();
   }
@@ -2617,22 +4596,13 @@ async function createSchedule() {
 function schedDebug(msg) {
   try {
     console.log("[DeepLock Schedule]", msg);
-    const panel = el("schedDebugPanel");
-    const log = el("schedDebugLog");
-    if (!panel || !log) return;
-    panel.style.display = "block";
-    const line = document.createElement("div");
-    line.className = "sched-debug-line";
-    line.textContent = `${new Date().toLocaleTimeString()} ${msg}`;
-    log.appendChild(line);
-    log.scrollTop = log.scrollHeight;
   } catch (_) {
     /* never let debug crash the app */
   }
 }
 
 function registerScheduleAlarm(schedule) {
-  const fireTime = new Date(schedule.scheduledAt).getTime();
+  const fireTime = getScheduleTimestamp(schedule);
   if (fireTime <= Date.now()) return;
   // Alarms must be created in the service worker, not the dashboard page
   chrome.runtime.sendMessage({ action: "registerScheduleAlarm", schedule });
@@ -2645,21 +4615,23 @@ async function loadSchedules() {
     (s) => s.active !== false,
   );
 
-  const now = new Date();
+  const now = Date.now();
   const upcoming = localSchedules
     .filter((s) => {
       if (s.repeat && s.repeat !== "none") return true;
-      return new Date(s.scheduled_at || s.scheduledAt) > now;
+      return getScheduleTimestamp(s) > now;
     })
-    .sort(
-      (a, b) =>
-        new Date(a.scheduled_at || a.scheduledAt) -
-        new Date(b.scheduled_at || b.scheduledAt),
-    );
+    .sort((a, b) => getScheduleTimestamp(a) - getScheduleTimestamp(b));
 
   renderSchedules(upcoming);
   setText("schedCount", `${upcoming.length} scheduled`);
+  updateScheduleSummary(upcoming);
+  updateSchedulePremiumState();
   schedDebug(`loadSchedules: ${upcoming.length} upcoming from local`);
+  const scheduleAccess = await new Promise((resolve) => {
+    getScheduleAccessState(resolve);
+  });
+  if (!scheduleAccess.isPro) return;
 
   // Sync from Supabase in background — update display if more data found
   getSchedules()
@@ -2675,15 +4647,12 @@ async function loadSchedules() {
           .filter((s) => s.active !== false)
           .filter((s) => {
             if (s.repeat && s.repeat !== "none") return true;
-            return new Date(s.scheduled_at || s.scheduledAt) > new Date();
+            return getScheduleTimestamp(s) > Date.now();
           })
-          .sort(
-            (a, b) =>
-              new Date(a.scheduled_at || a.scheduledAt) -
-              new Date(b.scheduled_at || b.scheduledAt),
-          );
+          .sort((a, b) => getScheduleTimestamp(a) - getScheduleTimestamp(b));
         renderSchedules(upd);
         setText("schedCount", `${upd.length} scheduled`);
+        updateScheduleSummary(upd);
       });
     })
     .catch(() => {
@@ -2699,13 +4668,56 @@ function mergeSchedules(local, remote) {
   });
   // Remote overwrites (they're the synced truth)
   (remote || []).forEach((s) => {
+    const scheduledMs = getScheduleTimestamp(s);
     map[s.id] = {
       ...s,
-      scheduledAt: s.scheduled_at || s.scheduledAt, // normalise key
+      scheduledAt:
+        toLocalDateTimeValue(s.scheduled_at || s.scheduledAt) ||
+        s.scheduled_at ||
+        s.scheduledAt,
+      scheduledMs,
       synced: true,
     };
   });
   return Object.values(map);
+}
+
+function updateScheduleSummary(schedules) {
+  const next = schedules[0];
+  const repeatCount = schedules.filter(
+    (item) => item.repeat && item.repeat !== "none",
+  ).length;
+
+  setText("schedHeroCount", String(schedules.length));
+  setText("schedHeroRepeat", String(repeatCount));
+
+  if (!next) {
+    setText("schedHeroNext", "No session");
+    setText("schedHeroNextNote", "Create one below");
+    return;
+  }
+
+  const nextTime = getScheduleTimestamp(next);
+  const nextDate = new Date(nextTime);
+  const dateLabel = nextDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  const timeLabel = nextDate.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const minsAway = Math.max(0, Math.round((nextTime - Date.now()) / 60000));
+
+  setText("schedHeroNext", `${dateLabel} / ${timeLabel}`);
+  setText(
+    "schedHeroNextNote",
+    minsAway < 60
+      ? `Starts in ${minsAway} min`
+      : minsAway < 1440
+        ? `Starts in ${Math.floor(minsAway / 60)} hr`
+        : `Starts in ${Math.floor(minsAway / 1440)} day`,
+  );
 }
 
 function renderSchedules(schedules) {
@@ -2724,7 +4736,7 @@ function renderSchedules(schedules) {
 
   list.innerHTML = schedules
     .map((s) => {
-      const dt = new Date(s.scheduled_at || s.scheduledAt);
+      const dt = new Date(getScheduleTimestamp(s));
       const dateStr = dt.toLocaleDateString("en-US", {
         weekday: "short",
         month: "short",
@@ -2737,8 +4749,9 @@ function renderSchedules(schedules) {
       const dur = s.duration >= 60 ? `${s.duration / 60}h` : `${s.duration}m`;
       const rep =
         s.repeat && s.repeat !== "none"
-          ? `<span class="sched-repeat-badge">${s.repeat}</span>`
+          ? `<span class="sched-repeat-badge">${formatScheduleRepeatLabel(s.repeat)}</span>`
           : "";
+      const siteBadge = `<span class="sched-sites-badge">${getScheduleSiteBadgeLabel(s)}</span>`;
       const id = s.id;
       const minsUntil = Math.round((dt - Date.now()) / 60000);
       const countdown =
@@ -2760,6 +4773,7 @@ function renderSchedules(schedules) {
           <div class="sched-card-meta">
             <span class="sched-dur-badge">${dur}</span>
             ${rep}
+            ${siteBadge}
           </div>
         </div>
         <button class="sched-delete-btn" data-id="${id}" title="Remove">
@@ -2857,7 +4871,7 @@ const LS_BILLING_URL = `https://${LS_STORE_SLUG}.lemonsqueezy.com/billing`;
 function initSubscriptionManagement() {
   // Populate retention stats
   chrome.storage.local.get(
-    ["currentStreak", "totalSessions", "licenseKey"],
+    ["currentStreak", "totalSessions", "licenseKey", "sbSignedIn"],
     (data) => {
       const streak = data.currentStreak || 0;
       const sessions = data.totalSessions || 0;
@@ -2878,6 +4892,7 @@ function initSubscriptionManagement() {
       // Renewal label — you can wire this from your webhook data later
       const renewsEl = el("subRenewsLabel");
       if (renewsEl) renewsEl.textContent = ""; // can populate from storage if you store renewal date
+      refreshSubscriptionUi();
     },
   );
 
@@ -2893,6 +4908,18 @@ function initSubscriptionManagement() {
   const updatePayBtn = el("updatePaymentBtn");
   if (updatePayBtn) {
     updatePayBtn.href = LS_BILLING_URL;
+    updatePayBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      chrome.storage.local.get(["sbSignedIn", "isPro"], (data) => {
+        if (!data.sbSignedIn) {
+          activateDashboardTab("profile");
+          setText("dashAuthStatus", "Sign in before managing or upgrading your subscription.");
+          return;
+        }
+        const target = data.isPro ? LS_BILLING_URL : LS_CHECKOUT_URL;
+        window.open(target, "_blank", "noopener,noreferrer");
+      });
+    });
   }
 
   // ── Step 1: Retention → Keep or Continue ──────────
@@ -2977,6 +5004,80 @@ function showCancelConfirmMessage() {
   // Remove after 8s
   card.appendChild(msg);
   setTimeout(() => msg.remove(), 8000);
+}
+
+function refreshSubscriptionUi() {
+  chrome.storage.local.get(
+    [
+      "sbSignedIn",
+      "isPro",
+      "subscriptionPlan",
+      "subscriptionStatus",
+      "subscriptionRenewsAt",
+      "subscriptionSource",
+    ],
+    (data) => {
+      const isSignedIn = !!data.sbSignedIn;
+      const isPro = !!data.isPro;
+      const plan = (data.subscriptionPlan || (isPro ? "pro" : "free")).toString();
+      const status = (data.subscriptionStatus || (isPro ? "active" : "inactive")).toString();
+      const source = (data.subscriptionSource || "").toString();
+      const renewsAt = data.subscriptionRenewsAt;
+      const renewsEl = el("subRenewsLabel");
+      const freeState = el("subStateFree");
+      const activeState = el("subStateActive");
+
+      if (freeState) freeState.style.display = !isPro ? "block" : "none";
+      if (activeState) activeState.style.display = isPro ? "block" : "none";
+
+      setText(
+        "licenseKeyRow",
+        !isSignedIn
+          ? "Sign in to unlock DeepLock Pro and sync premium access."
+          : source === "legacy_license"
+            ? "Legacy Pro access linked to this account"
+            : isPro
+              ? `${plan.toUpperCase()} plan • ${status}`
+              : "Free plan • upgrade after sign in",
+      );
+      if (renewsEl) {
+        renewsEl.textContent = renewsAt
+          ? `Renews ${new Date(renewsAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+          : isPro
+            ? "Active"
+            : "";
+      }
+      setText("profilePlanBadge", isPro ? "Pro plan active" : isSignedIn ? "Free plan" : "Signed out");
+      setText("profileSyncBadge", isSignedIn ? "Cloud sync ready" : "Sign in required");
+      setText(
+        "profileProtectionBadge",
+        isPro
+          ? "Progress fully protected"
+          : isSignedIn
+            ? "Progress not fully protected yet"
+            : "Upgrade path locked until sign in",
+      );
+      setText(
+        "profileUpgradeCopy",
+        isSignedIn
+          ? "Pro turns DeepLock into your personal focus system: synced, restorable, and shaped around your real distractions."
+          : "Start by signing in. Then DeepLock Pro can protect your streak, archive, and premium setup under one account.",
+      );
+      setText(
+        "profileUpgradeNote",
+        isSignedIn
+          ? "Upgrade runs through Lemon Squeezy after sign in. Legacy license restore stays available if you bought before."
+          : "Sign in first, then upgrade through Lemon Squeezy. Legacy license restore stays available if you bought before.",
+      );
+      setText("profileUpgradeBtn", isSignedIn ? "Unlock DeepLock Pro" : "Sign in to continue");
+
+      updateOverviewPremiumState();
+      updateHistoryPremiumState();
+      updateSitesPremiumState();
+      updateSchedulePremiumState();
+      updateInsightsPremiumState();
+    },
+  );
 }
 
 // initSubscriptionManagement is called from initDashboard above
