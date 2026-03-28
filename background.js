@@ -10,6 +10,8 @@ importScripts("supabase.js");
 const LS_STORE_ID = "301246";
 const LS_PRODUCT_ID = "853068";
 const LS_API = "https://api.lemonsqueezy.com/v1/licenses";
+const LS_CHECKOUT_URL =
+  "https://deeplockproversion.lemonsqueezy.com/checkout/buy/7b55508e-ee4c-4a87-98ff-c7ddde0ba69a";
 
 // Free tier: 10 highest-distraction sites
 // declarativeNetRequest urlFilter — tested patterns for each site
@@ -71,6 +73,22 @@ const SITE_USAGE_TRACKING_KEY = "siteUsageTrackingState";
 const AUTO_KILL_STATE_KEY = "autoKillTrackingState";
 const SESSION_LOG_KEY = "focusSessionLog";
 const TEMP_BYPASS_STRICT_MODE_PRO_FOR_TESTING = false;
+
+function buildCheckoutUrl(baseUrl, { userId, email } = {}) {
+  try {
+    const url = new URL(baseUrl);
+    if (email) {
+      url.searchParams.set("checkout[email]", email);
+      url.searchParams.set("checkout[custom][email]", email);
+    }
+    if (userId) {
+      url.searchParams.set("checkout[custom][user_id]", userId);
+    }
+    return url.toString();
+  } catch {
+    return baseUrl;
+  }
+}
 let isSessionActive = false;
 let autoKillCurrentDomain = null;
 let autoKillStartTime = null;
@@ -1104,10 +1122,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // ⚠️  YOUR LEMON SQUEEZY CHECKOUT URL
     // Replace with the URL from: lemonsqueezy.com → Your Store → Products → DeepLock Pro → Share
     // Format: https://YOUR-STORE.lemonsqueezy.com/checkout/buy/PRODUCT-UUID
-    const CHECKOUT_URL =
-      "https://deeplockproversion.lemonsqueezy.com/checkout/buy/7b55508e-ee4c-4a87-98ff-c7ddde0ba69a";
-    chrome.tabs.create({ url: CHECKOUT_URL });
-    sendResponse({ status: "ok" });
+    chrome.storage.local.get(["sbUserId", "sbEmail"], (data) => {
+      const checkoutUrl = buildCheckoutUrl(LS_CHECKOUT_URL, {
+        userId: data.sbUserId,
+        email: data.sbEmail,
+      });
+      chrome.tabs.create({ url: checkoutUrl });
+      sendResponse({ status: "ok", checkoutUrl });
+    });
     return true;
   }
 

@@ -734,9 +734,17 @@ Recommended production subscription flow:
 
 - sign-in required before upgrade
 - Lemon Squeezy checkout after sign-in
+- checkout now passes `checkout[custom][user_id]` and `checkout[email]` so the payment can be linked back to the signed-in Supabase user
 - webhook updates Supabase subscription fields
 - extension validates Pro from Supabase-backed subscription state
 - legacy license remains only as a fallback for older buyers
+
+Webhook/backend scaffold:
+
+- Supabase Edge Function file added at `supabase/functions/lemonsqueezy-webhook/index.ts`
+- verifies Lemon Squeezy `X-Signature`
+- reads `meta.custom_data.user_id`
+- upserts `plan`, `subscription_status`, `subscription_source`, `subscription_renews_at`, `lemonsqueezy_customer_id`, `lemonsqueezy_subscription_id`, and `is_pro` into `chomeExstensionSettings`
 
 Subscription management UI in dashboard includes:
 

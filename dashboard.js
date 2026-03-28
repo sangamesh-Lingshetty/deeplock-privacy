@@ -224,6 +224,32 @@ function setText(id, val) {
   if (e) e.textContent = val;
 }
 
+function buildCheckoutUrl(baseUrl, { userId, email } = {}) {
+  try {
+    const url = new URL(baseUrl);
+    if (email) {
+      url.searchParams.set("checkout[email]", email);
+      url.searchParams.set("checkout[custom][email]", email);
+    }
+    if (userId) {
+      url.searchParams.set("checkout[custom][user_id]", userId);
+    }
+    return url.toString();
+  } catch {
+    return baseUrl;
+  }
+}
+
+function openCheckoutForCurrentUser() {
+  chrome.storage.local.get(["sbUserId", "sbEmail"], (data) => {
+    const target = buildCheckoutUrl(LS_CHECKOUT_URL, {
+      userId: data.sbUserId,
+      email: data.sbEmail,
+    });
+    window.open(target, "_blank", "noopener,noreferrer");
+  });
+}
+
 function isOverviewRangePremiumLocked(rangeKey, state = {}) {
   const isPro = !!state.isPro;
   return PREMIUM_OVERVIEW_RANGES.has(rangeKey) && !isPro;
@@ -292,7 +318,7 @@ function updateOverviewPremiumState() {
           setText("dashAuthStatus", "Sign in to unlock long-range focus trends.");
           return;
         }
-        window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+        openCheckoutForCurrentUser();
       };
     }
   });
@@ -338,7 +364,7 @@ function updateHistoryPremiumState() {
           setText("dashAuthStatus", "Sign in to unlock your full focus archive.");
           return;
         }
-        window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+        openCheckoutForCurrentUser();
       };
     }
   });
@@ -384,7 +410,7 @@ function updateInsightsPremiumState() {
           setText("dashAuthStatus", "Sign in to unlock long-range Insights.");
           return;
         }
-        window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+        openCheckoutForCurrentUser();
       };
     }
   });
@@ -400,7 +426,7 @@ function routeToPremiumBlocking(state = sitesAccessState) {
     setText("dashAuthStatus", "Sign in to unlock custom blocking and extra Smart Lock sites.");
     return;
   }
-  window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+  openCheckoutForCurrentUser();
 }
 
 function updateSitesPremiumState() {
@@ -1320,7 +1346,7 @@ function bindProfileEvents() {
           setText("dashAuthStatus", "Sign in before upgrading to DeepLock Pro.");
           return;
         }
-        window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+        openCheckoutForCurrentUser();
       });
     });
   }
@@ -4185,7 +4211,7 @@ function routeToSchedulePremium(state = { isPro: false, isSignedIn: false }) {
     setText("dashAuthStatus", "Sign in to unlock DeepLock Pro scheduling.");
     return;
   }
-  window.open(LS_CHECKOUT_URL, "_blank", "noopener,noreferrer");
+  openCheckoutForCurrentUser();
 }
 
 function updateSchedulePremiumState() {
@@ -4916,8 +4942,11 @@ function initSubscriptionManagement() {
           setText("dashAuthStatus", "Sign in before managing or upgrading your subscription.");
           return;
         }
-        const target = data.isPro ? LS_BILLING_URL : LS_CHECKOUT_URL;
-        window.open(target, "_blank", "noopener,noreferrer");
+        if (data.isPro) {
+          window.open(LS_BILLING_URL, "_blank", "noopener,noreferrer");
+        } else {
+          openCheckoutForCurrentUser();
+        }
       });
     });
   }

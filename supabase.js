@@ -10,6 +10,7 @@ const SUPABASE_ANON_KEY =
 const GOOGLE_CLIENT_ID =
   "523486634791-lnhttaq8cob6q42urt60uaouqag4oko6.apps.googleusercontent.com";
 
+const service_role="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpydW5pdGtvb3Z5bHl3dG96eHFsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTY1NTkwMywiZXhwIjoyMDg3MjMxOTAzfQ.Y9Eff40MxA6rS4HBjJ7fpAlPA9CPPnvRbnYIQTtDvfo"
 // ================================
 // GOOGLE SIGN IN
 // Uses launchWebAuthFlow — works in Chrome extensions
