@@ -643,10 +643,19 @@
               <div class="sites-premium-card">
                 <div class="sites-premium-kicker" id="sitesPremiumKicker">Precision Blocking</div>
                 <div class="sites-premium-title" id="sitesPremiumTitle">
-                  Unlock your personal distraction system
+                  Unlock your custom block list
                 </div>
                 <div class="sites-premium-copy" id="sitesPremiumCopy">
-                  Block the exact sites that break your focus, then keep that setup synced across every DeepLock install.
+                  Add your own distracting sites here and keep that setup synced to your account.
+                </div>
+                <div class="sites-premium-preview">
+                  <div class="sites-premium-preview-label">Examples</div>
+                  <div class="sites-premium-preview-list">
+                    <span class="sites-premium-chip">linkedin.com</span>
+                    <span class="sites-premium-chip">chess.com</span>
+                    <span class="sites-premium-chip">amazon.in</span>
+                    <span class="sites-premium-chip">netflix.com</span>
+                  </div>
                 </div>
                 <button class="sites-premium-btn" id="sitesPremiumBtn" type="button">
                   Unlock custom blocking
@@ -789,26 +798,25 @@
             <div id="subStateFree" style="display: none">
               <div class="profile-plan-hero profile-plan-hero-upgrade">
                 <div class="profile-plan-kicker">DeepLock Pro</div>
-                <div class="profile-plan-title">Protect your momentum, not just today's session</div>
+                <div class="profile-plan-title">DeepLock Pro, simplified</div>
                 <div class="profile-plan-copy" id="profileUpgradeCopy">
-                  Pro turns DeepLock into your personal focus system: synced, restorable, and shaped around your real distractions.
+                  Premium focus, protected progress, and a setup you can trust.
                 </div>
                 <div class="profile-upgrade-grid">
                   <div class="profile-upgrade-card">
                     <div class="profile-upgrade-label">What unlocks</div>
                     <div class="profile-upgrade-list">
-                      <div>30D and 1Y Overview trends</div>
-                      <div>30D / 90D / All History archive</div>
-                      <div>Custom blocked sites and extra Smart Lock sites</div>
-                      <div>Premium Insights and cross-device sync</div>
+                      <div>Long-range trends</div>
+                      <div>Full history archive</div>
+                      <div>Custom blocking + sync</div>
                     </div>
                   </div>
                   <div class="profile-upgrade-card">
                     <div class="profile-upgrade-label">Why it matters</div>
                     <div class="profile-upgrade-list" id="profileLockedValueList">
-                      <div>Your long-range progress is still locked</div>
-                      <div>Your custom distraction system is not protected yet</div>
-                      <div>Your premium setup is not restorable across installs</div>
+                      <div>Your progress stays protected</div>
+                      <div>Your system follows your account</div>
+                      <div>Your setup is easy to restore</div>
                     </div>
                   </div>
                 </div>
@@ -821,7 +829,26 @@
                   </button>
                 </div>
                 <div class="profile-plan-note" id="profileUpgradeNote">
-                  Sign in first, then upgrade through Lemon Squeezy. Legacy license restore stays available if you bought before.
+                  Sign in, upgrade, and your Pro access stays linked to this account.
+                </div>
+                <div class="profile-license-restore">
+                  <div class="profile-upgrade-label">Already bought Pro?</div>
+                  <div class="profile-license-copy">
+                    Restore Pro with your license key.
+                  </div>
+                  <div class="profile-license-form">
+                    <input
+                      id="profileLicenseKeyInput"
+                      class="profile-license-input"
+                      type="text"
+                      placeholder="Enter your license key"
+                      autocomplete="off"
+                    />
+                    <button class="retention-keep-btn" id="profileLicenseActivateBtn" type="button">
+                      Activate license
+                    </button>
+                  </div>
+                  <div class="profile-license-status" id="profileLicenseStatus" aria-live="polite"></div>
                 </div>
               </div>
             </div>

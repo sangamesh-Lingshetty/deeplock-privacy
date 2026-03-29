@@ -92,8 +92,8 @@ Handles:
 - showing active session timer
 - showing free-plan limits
 - Pro upgrade flow
-- license key activation
-- custom blocked site management for Pro
+- quick default blocked-site toggles
+- dashboard shortcut for deeper account and site management
 
 ### [dashboard.html](/D:/deeplock/dashboard.html), [dashboard.js](/D:/deeplock/dashboard.js), [dashboard.css](/D:/deeplock/dashboard.css)
 
@@ -110,7 +110,7 @@ Contains tabs for:
 
 Also includes:
 
-- Pro gate
+- no full-page Pro gate; premium access is handled inside tabs and account states
 - theme toggle
 - analytics rendering
 - full-width Overview dashboard with Today / 7D / 30D / 1Y analytics
@@ -119,6 +119,7 @@ Also includes:
 - schedule-specific blocked-site picker
 - subscription management UI
 - account-first Profile upgrade experience for signed-out, free, and Pro users
+- Profile-based legacy license restore input for signed-in users
 - Smart Lock settings UI
 - Smart Lock Strict Mode toggle and no-continue intervention behavior
 - full-width Blocked Sites workspace layout
@@ -126,8 +127,8 @@ Also includes:
 
 Blocked Sites tab layout:
 
-- left column for custom blocked site search and management
-- right column for Smart Lock status, armed sites, and add-more site controls
+- left column for custom blocked site search, premium-locked preview, and personal block-list management
+- right column for Smart Lock status, armed sites, default pack controls, and add-more site controls
 
 ### [supabase.js](/D:/deeplock/supabase.js)
 
@@ -265,7 +266,8 @@ Flow:
 - user signs in with Google first
 - DeepLock links product state to the signed-in account
 - user upgrades through Lemon Squeezy checkout
-- webhook or backend updates subscription fields in Supabase
+- legacy buyers can also restore Pro from the Profile tab by entering a license key
+- direct frontend license validation can save Pro entitlement into Supabase when webhook/edge deployment is not being used
 - extension reads Pro entitlement from Supabase settings as the source of truth
 - local `isPro` is only a cached reflection of server-backed entitlement
 - legacy license keys remain only as a recovery / migration fallback
@@ -463,7 +465,7 @@ The extension includes a default set of distracting sites such as:
 - Twitch
 - Discord
 
-The popup and dashboard also allow Pro users to add more custom domains.
+The dashboard allows Pro users to add more custom domains.
 
 ---
 
@@ -512,12 +514,14 @@ Shows:
 Shows:
 
 - default blocked sites
+- custom blocked sites workspace on the left
 - Smart Lock (Auto Kill) settings
 - Smart Lock armed-site controls and per-site trigger minutes
 - Smart Lock Strict Mode toggle that removes the `Continue` path from interventions
 - Smart Lock live status summary and intervention readiness state
 - category-based site browser
 - search/add custom sites
+- premium-locked preview that explains the custom blocked-sites area to free users
 - clear and manage custom blocked list
 - Free: full control over the default Smart Lock distraction pack
 - Pro: custom blocked sites, extra Smart Lock sites, and Smart Lock Strict Mode with premium blur + upgrade CTA
@@ -531,6 +535,7 @@ Shows:
 - account protection messaging for signed-out users
 - plan badge and progress-protection state for signed-in users
 - upgrade value card for free users
+- legacy license restore input for signed-in users in the subscription area
 - license key display
 - subscription management UI
 - support contact
@@ -865,8 +870,6 @@ Some key utility and helper logic added/used:
 ## Current Known Gaps / Notes
 
 - `README.md` is a privacy policy, not a contributor/developer readme
-- `hardmode.html` is referenced but missing
-- `uninstall.html` is referenced but missing
 - some older text content has encoding artifacts in legacy files
 - site usage tracking is lightweight active-tab tracking, not full enterprise-grade browsing telemetry
 

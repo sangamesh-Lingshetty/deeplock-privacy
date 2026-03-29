@@ -9,8 +9,6 @@ const SUPABASE_ANON_KEY =
 
 const GOOGLE_CLIENT_ID =
   "523486634791-lnhttaq8cob6q42urt60uaouqag4oko6.apps.googleusercontent.com";
-
-const service_role="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpydW5pdGtvb3Z5bHl3dG96eHFsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTY1NTkwMywiZXhwIjoyMDg3MjMxOTAzfQ.Y9Eff40MxA6rS4HBjJ7fpAlPA9CPPnvRbnYIQTtDvfo"
 // ================================
 // GOOGLE SIGN IN
 // Uses launchWebAuthFlow — works in Chrome extensions
@@ -267,15 +265,6 @@ function getSubscriptionStateFromSettings(settings) {
   };
 }
 
-async function saveLegacyLicenseEntitlement() {
-  return upsertSettingsPatch({
-    plan: "pro",
-    subscription_status: "active",
-    subscription_source: "legacy_license",
-    is_pro: true,
-  });
-}
-
 // ================================
 // SYNC FULL STATS TO SUPABASE
 // Called after session completes — pushes streak/session counts
@@ -337,6 +326,104 @@ async function loadCloudSettings() {
   if (!res.ok) return null;
   const rows = await res.json();
   return rows[0] || null;
+}
+
+async function validateLicense(licenseKey) {
+  const trimmed = String(licenseKey || "").trim();
+  if (!trimmed) {
+    return { ok: false, error: "Enter a valid license key." };
+  }
+
+  try {
+    const res = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: new URLSearchParams({
+        license_key: trimmed,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.valid !== true) {
+      return {
+        ok: false,
+        error: data?.error || "Invalid license key.",
+      };
+    }
+
+    return {
+      ok: true,
+      licenseKey: trimmed,
+      status: data?.license_key?.status || "active",
+      raw: data,
+    };
+  } catch (_) {
+    return {
+      ok: false,
+      error: "License validation failed. Check your internet and try again.",
+    };
+  }
+}
+
+async function saveLicenseToSupabase(userId, licenseKey) {
+  const session = await getSession();
+  if (!session || !userId) return false;
+
+  const settingsRes = await sbFetch(
+    "/rest/v1/chomeExstensionSettings",
+    "POST",
+    {
+      user_id: userId,
+      plan: "pro",
+      subscription_status: "active",
+      subscription_source: "legacy_license",
+      is_pro: true,
+      updated_at: new Date().toISOString(),
+    },
+    session.accessToken,
+    { prefer: "resolution=merge-duplicates" },
+  );
+
+  if (!settingsRes.ok) return false;
+
+  await sbFetch(
+    "/rest/v1/chomeExstensionProfiles",
+    "POST",
+    {
+      id: userId,
+      email: session.email,
+      license_key: licenseKey,
+    },
+    session.accessToken,
+    { prefer: "resolution=merge-duplicates" },
+  ).catch(() => {});
+
+  return true;
+}
+
+async function getProStatusFromSupabase() {
+  const session = await getSession();
+  if (!session) {
+    return {
+      isPro: false,
+      plan: "free",
+      status: "inactive",
+      source: "",
+    };
+  }
+
+  const settings = await loadCloudSettings();
+  const sub = getSubscriptionStateFromSettings(settings || {});
+  return {
+    isPro: !!sub.isPro,
+    plan: sub.plan || "free",
+    status: sub.status || "inactive",
+    source: sub.source || "",
+    renewsAt: sub.renewsAt || null,
+  };
 }
 
 // ================================
@@ -500,6 +587,23 @@ async function sbFetch(path, method, body, accessToken, extraHeaders = {}) {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+async function invokeEdgeFunction(functionName, body, accessToken) {
+  const headers = {
+    "Content-Type": "application/json",
+    apikey: SUPABASE_ANON_KEY,
+  };
+
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
+  return fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body || {}),
   });
 }
 

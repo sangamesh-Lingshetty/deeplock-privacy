@@ -60,6 +60,7 @@
     "https://web.telegram.org/*",
     "https://open.spotify.com/*",
     "https://www.spotify.com/*",
+    "https://api.lemonsqueezy.com/*",
     "https://t.co/*",
     "https://messenger.com/*",
     "https://l.messenger.com/*",

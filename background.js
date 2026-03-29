@@ -8,10 +8,13 @@ importScripts("supabase.js");
 // ⚠️  REPLACE THIS with your Lemon Squeezy Store ID
 // Found at: lemonsqueezy.com → Settings → Store
 const LS_STORE_ID = "301246";
-const LS_PRODUCT_ID = "853068";
-const LS_API = "https://api.lemonsqueezy.com/v1/licenses";
 const LS_CHECKOUT_URL =
   "https://deeplockproversion.lemonsqueezy.com/checkout/buy/7b55508e-ee4c-4a87-98ff-c7ddde0ba69a";
+const LICENSE_FUNCTION_NAME = "license-entitlement";
+const LICENSE_DEVICE_ID_KEY = "licenseDeviceId";
+const LICENSE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const PRO_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const SYNC_PRO_STATUS_ALARM = "syncProStatusDaily";
 
 // Free tier: 10 highest-distraction sites
 // declarativeNetRequest urlFilter — tested patterns for each site
@@ -870,69 +873,142 @@ async function handleAutoKillAlarm() {
 
 // ================================
 // LICENSE KEY VALIDATION
-// All checks hit Lemon Squeezy server — cannot be faked locally
+// Supabase Edge Function is the only trusted source for legacy licenses.
 // ================================
+
+async function getOrCreateLicenseDeviceId() {
+  const data = await chrome.storage.local.get([LICENSE_DEVICE_ID_KEY]);
+  if (data[LICENSE_DEVICE_ID_KEY]) return data[LICENSE_DEVICE_ID_KEY];
+
+  const deviceId =
+    typeof crypto?.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `deeplock-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  await chrome.storage.local.set({ [LICENSE_DEVICE_ID_KEY]: deviceId });
+  return deviceId;
+}
+
+async function callLicenseEntitlement(action, payload = {}) {
+  const session = await getSession();
+  const deviceId = await getOrCreateLicenseDeviceId();
+  const response = await invokeEdgeFunction(
+    LICENSE_FUNCTION_NAME,
+    {
+      action,
+      deviceId,
+      ...payload,
+    },
+    session?.accessToken,
+  );
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.ok === false) {
+    const error =
+      data?.error ||
+      data?.message ||
+      `License request failed with status ${response.status}.`;
+    throw new Error(error);
+  }
+
+  return data;
+}
+
+async function writeEntitlementCache({
+  isPro,
+  licenseKey,
+  licenseInstanceId,
+  status,
+  source,
+  checkedAt,
+}) {
+  const checkedAtMs =
+    typeof checkedAt === "number"
+      ? checkedAt
+      : Date.parse(String(checkedAt || "")) || Date.now();
+  const next = {
+    isPro: !!isPro,
+    licenseValidatedAt: checkedAtMs,
+    lastProServerSyncAt: checkedAtMs,
+    subscriptionPlan: isPro ? "pro" : "free",
+    subscriptionStatus: status || (isPro ? "active" : "inactive"),
+    subscriptionSource: source || (isPro ? "legacy_license" : ""),
+  };
+
+  if (licenseKey !== undefined) next.licenseKey = licenseKey;
+  if (licenseInstanceId !== undefined) next.licenseInstanceId = licenseInstanceId;
+
+  await chrome.storage.local.set(next);
+}
+
+async function clearLegacyEntitlementCache() {
+  await chrome.storage.local.set({
+    isPro: false,
+    licenseValidatedAt: 0,
+    lastProServerSyncAt: 0,
+    subscriptionPlan: "free",
+    subscriptionStatus: "inactive",
+    subscriptionSource: "",
+  });
+}
+
+async function disableProAccess(reason = "unknown") {
+  console.warn("[DeepLock] Pro access disabled:", reason);
+  await chrome.storage.local.set({
+    isPro: false,
+    licenseValidatedAt: 0,
+    lastProServerSyncAt: 0,
+    subscriptionPlan: "free",
+    subscriptionStatus: "inactive",
+    subscriptionSource: "",
+  });
+}
+
+function passesTamperChecks() {
+  if (!chrome?.runtime?.id) return false;
+  if (typeof enableBlocking !== "function") return false;
+  if (typeof disableBlocking !== "function") return false;
+  if (typeof unlockSession !== "function") return false;
+  if (typeof validateEntitlement !== "function") return false;
+  return true;
+}
 
 async function activateLicenseKey(licenseKey) {
   try {
-    const res = await fetch(`${LS_API}/activate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        license_key: licenseKey,
-        instance_name: "DeepLock-" + Date.now(),
-      }),
+    const trimmedKey = String(licenseKey || "").trim();
+    if (!trimmedKey) {
+      return { success: false, error: "Enter a valid license key." };
+    }
+
+    const result = await callLicenseEntitlement("activate", {
+      licenseKey: trimmedKey,
+    });
+    const entitlement = result?.entitlement || {};
+
+    await writeEntitlementCache({
+      isPro: entitlement.isPro,
+      licenseKey: trimmedKey,
+      licenseInstanceId: entitlement.licenseInstanceId || null,
+      status: entitlement.status,
+      source: entitlement.source,
+      checkedAt: entitlement.checkedAt,
     });
 
-    const data = await res.json();
-
-    if (data.activated) {
-      // Verify this key is for DeepLock specifically (not a key from another product)
-      const productId = data.meta?.product_id?.toString() || "";
-      if (productId && productId !== LS_PRODUCT_ID.toString()) {
-        return { success: false, error: "This key is not valid for DeepLock." };
-      }
-
-      await chrome.storage.local.set({
-        isPro: true,
-        licenseKey,
-        licenseInstanceId: data.instance?.id || null,
-        licenseValidatedAt: Date.now(),
-      });
-      saveLegacyLicenseEntitlement().catch(() => {});
-      return { success: true };
-    } else {
-      // Key exists but activation limit reached (already on max devices)
-      // DO NOT grant Pro — this is the key-sharing attack vector
-      // Instead, tell the user to deactivate on another device or buy a new key
-      const status = data.license_key?.status;
-
-      if (status === "active") {
-        // Key is real but instance limit hit — help user, don't grant for free
-        return {
-          success: false,
-          error:
-            "Key already activated on another device. Deactivate it first at lemonsqueezy.com, or use a different key.",
-        };
-      }
-
-      if (status === "expired") {
-        return { success: false, error: "This license key has expired." };
-      }
-
-      if (status === "disabled") {
-        return { success: false, error: "This license key has been disabled." };
-      }
-
+    if (!entitlement.isPro) {
       return {
         success: false,
-        error: data.error || "Invalid license key. Check and try again.",
+        error: result?.error || "This license key could not be activated.",
       };
     }
+
+    return {
+      success: true,
+      source: entitlement.source || "legacy_license",
+    };
   } catch (e) {
     return {
       success: false,
-      error: "Network error. Check your connection and try again.",
+      error: e?.message || "License activation failed. Try again in a moment.",
     };
   }
 }
@@ -947,48 +1023,44 @@ async function validateLegacyLicenseKey() {
 
   // No key stored → definitely not Pro
   if (!data.licenseKey) {
-    await chrome.storage.local.set({ isPro: false });
+    await clearLegacyEntitlementCache();
     return { isPro: false };
   }
 
   // No instanceId → key was never properly activated through LS server
   // Catches: someone who manually set licenseKey without going through activateLicenseKey()
   if (!data.licenseInstanceId) {
-    await chrome.storage.local.set({ isPro: false });
+    await clearLegacyEntitlementCache();
     return { isPro: false };
   }
 
   try {
-    const res = await fetch(`${LS_API}/validate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        license_key: data.licenseKey,
-        instance_id: data.licenseInstanceId,
-      }),
+    const result = await callLicenseEntitlement("validate", {
+      licenseKey: data.licenseKey,
+      licenseInstanceId: data.licenseInstanceId,
+    });
+    const entitlement = result?.entitlement || {};
+
+    await writeEntitlementCache({
+      isPro: entitlement.isPro,
+      licenseKey: data.licenseKey,
+      licenseInstanceId:
+        entitlement.licenseInstanceId || data.licenseInstanceId || null,
+      status: entitlement.status,
+      source: entitlement.source,
+      checkedAt: entitlement.checkedAt,
     });
 
-    const json = await res.json();
-    // Valid = server says valid AND status is active (not expired/disabled)
-    const isValid =
-      json.valid === true && json.license_key?.status === "active";
-
-    await chrome.storage.local.set({
-      isPro: isValid,
-      licenseValidatedAt: Date.now(),
-    });
-
-    return { isPro: isValid };
+    return {
+      isPro: !!entitlement.isPro,
+      source: entitlement.source || "legacy_license",
+    };
   } catch (e) {
-    // Network genuinely offline — trust local cache for up to 3 days (not 7)
-    // Shorter window = smaller attack surface for the offline bypass
-    const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
     const lastValidated = data.licenseValidatedAt || 0;
-    const useCached = Date.now() - lastValidated < THREE_DAYS;
+    const useCached = Date.now() - lastValidated < LICENSE_CACHE_TTL_MS;
 
     if (!useCached) {
-      // Cache expired — force re-validation next time online
-      await chrome.storage.local.set({ isPro: false });
+      await clearLegacyEntitlementCache();
       return { isPro: false };
     }
 
@@ -1004,10 +1076,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "startBlock") {
     const { lockEndTime, duration, intent, pinHash, energyLevel, selectedBlockedDomains } = msg;
 
-    // ── SECURITY: Always validate Pro status live against Lemon Squeezy ──
+    // ── SECURITY: Always validate Pro status through the server-backed entitlement path ──
     // NEVER trust isPro from chrome.storage.local — it's writable by anyone
-    // with DevTools. validateLicenseKey() hits the LS server every time.
-    // Falls back to 7-day cache ONLY if network is genuinely offline.
+    // with DevTools. Validation falls back to a short offline cache only if
+    // the last server-backed check was recent.
     validateEntitlement().then((validation) => {
       const isProVerified = validation.isPro;
 
@@ -1112,7 +1184,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === "validateLicense") {
-    validateEntitlement().then((result) => {
+    ensureValidPro({ force: true }).then((result) => {
+      sendResponse(result);
+    });
+    return true;
+  }
+
+  if (msg.action === "ensureValidPro") {
+    ensureValidPro({ force: false }).then((result) => {
       sendResponse(result);
     });
     return true;
@@ -1480,6 +1559,11 @@ function setNuclearUninstallURL() {
 }
 
 async function validateEntitlement() {
+  if (!passesTamperChecks()) {
+    await disableProAccess("tamper_check_failed");
+    return { isPro: false, source: "tamper" };
+  }
+
   const session = await getSession();
 
   if (session) {
@@ -1495,7 +1579,9 @@ async function validateEntitlement() {
         lemonsqueezyCustomerId: sub.customerId || null,
         lemonsqueezySubscriptionId: sub.subscriptionId || null,
       });
-      if (sub.isPro) return { isPro: true, source: "supabase" };
+      if (sub.isPro && sub.source !== "legacy_license") {
+        return { isPro: true, source: "supabase" };
+      }
     } catch (e) {
       console.log("[DeepLock] Supabase entitlement check failed:", e?.message || e);
     }
@@ -1506,6 +1592,75 @@ async function validateEntitlement() {
     isPro: !!legacy.isPro,
     source: legacy.isPro ? "legacy_license" : "none",
   };
+}
+
+async function syncProStatusFromSupabase() {
+  try {
+    if (!passesTamperChecks()) {
+      await disableProAccess("tamper_check_failed");
+      return { isPro: false };
+    }
+
+    const session = await getSession();
+    if (!session) {
+      await disableProAccess("no_session");
+      return { isPro: false };
+    }
+
+    const pro = await getProStatusFromSupabase();
+    await chrome.storage.local.set({
+      isPro: !!pro.isPro,
+      lastProServerSyncAt: Date.now(),
+      subscriptionPlan: pro.plan || (pro.isPro ? "pro" : "free"),
+      subscriptionStatus: pro.status || (pro.isPro ? "active" : "inactive"),
+      subscriptionSource: pro.source || "",
+      licenseValidatedAt: Date.now(),
+    });
+
+    return { isPro: !!pro.isPro };
+  } catch (error) {
+    console.log("[DeepLock] Pro status sync failed:", error?.message || error);
+    return { isPro: false };
+  }
+}
+
+async function ensureValidPro({ force = false } = {}) {
+  if (!passesTamperChecks()) {
+    await disableProAccess("tamper_check_failed");
+    return { isPro: false, source: "tamper" };
+  }
+
+  const data = await chrome.storage.local.get([
+    "isPro",
+    "lastProServerSyncAt",
+    "licenseKey",
+    "licenseInstanceId",
+  ]);
+  const lastSync = Number(data.lastProServerSyncAt) || 0;
+  const cacheFresh = lastSync > 0 && Date.now() - lastSync < PRO_CACHE_TTL_MS;
+
+  if (!force && cacheFresh) {
+    return { isPro: !!data.isPro, source: "cache" };
+  }
+
+  const session = await getSession();
+  if (session) {
+    const synced = await syncProStatusFromSupabase();
+    if (synced?.isPro) {
+      return { isPro: true, source: "supabase" };
+    }
+  }
+
+  if (data.licenseKey && data.licenseInstanceId) {
+    const legacy = await validateLegacyLicenseKey();
+    return {
+      isPro: !!legacy.isPro,
+      source: legacy.isPro ? "legacy_license" : "none",
+    };
+  }
+
+  await disableProAccess("stale_or_missing_entitlement");
+  return { isPro: false, source: "none" };
 }
 
 // ── Layer 3: Detect mid-session reinstall ──────────────────────
@@ -1536,7 +1691,10 @@ function checkMidSessionQuit() {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(REMINDER_ALARM, { periodInMinutes: 24 * 60 });
   chrome.alarms.create(INACTIVITY_ALARM, { periodInMinutes: 24 * 60 });
+  chrome.alarms.create(SYNC_PRO_STATUS_ALARM, { periodInMinutes: 24 * 60 });
   scheduleSmartAlarms();
+  getOrCreateLicenseDeviceId().catch(() => {});
+  syncProStatusFromSupabase().catch(() => {});
 
   chrome.storage.local.get(["totalSessions"], (data) => {
     if (data.totalSessions === undefined) {
@@ -1565,6 +1723,7 @@ chrome.runtime.onInstalled.addListener(() => {
 // ================================
 chrome.runtime.onStartup.addListener(() => {
   checkLockStatus();
+  syncProStatusFromSupabase().catch(() => {});
   validateEntitlement();
   scheduleSmartAlarms();
   refreshUsageTracking();
@@ -1595,6 +1754,14 @@ chrome.runtime.onStartup.addListener(() => {
       chrome.alarms.create(INACTIVITY_ALARM, { periodInMinutes: 24 * 60 });
   });
 
+  chrome.alarms.get(SYNC_PRO_STATUS_ALARM, (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create(SYNC_PRO_STATUS_ALARM, {
+        periodInMinutes: 24 * 60,
+      });
+    }
+  });
+
   // Weekly Pro report — fires every Sunday at 8pm
   chrome.alarms.get("weeklyReport", (alarm) => {
     if (!alarm) {
@@ -1613,6 +1780,7 @@ chrome.runtime.onStartup.addListener(() => {
 
 bindSiteUsageTracking();
 refreshUsageTracking();
+syncProStatusFromSupabase().catch(() => {});
 
 // ================================
 // ALARMS
@@ -1622,6 +1790,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   else if (alarm.name === AUTO_KILL_ALARM) handleAutoKillAlarm();
   else if (alarm.name === REMINDER_ALARM) checkWeeklyInactivity();
   else if (alarm.name === INACTIVITY_ALARM) checkInactivity();
+  else if (alarm.name === SYNC_PRO_STATUS_ALARM) syncProStatusFromSupabase().catch(() => {});
   else if (alarm.name === MORNING_ALARM) checkMorningFocus();
   else if (alarm.name === EVENING_ALARM) checkEveningFocus();
   else if (alarm.name === "weeklyReport") checkWeeklyReport();
@@ -1759,7 +1928,7 @@ function _doMorningNotification(today) {
             type: "basic",
             iconUrl: "icon128.png",
             title: "Start your first session 🌅",
-            message: "Morning is the best time to lock in. Don't waste it.",
+            message: "A small focused win now makes the rest of the day easier. Start with one session.",
             priority: 2,
             buttons: [{ title: "Lock in now" }],
           });
@@ -1859,7 +2028,7 @@ function _doEveningNotification(today) {
             type: "basic",
             iconUrl: "icon128.png",
             title: "Zero sessions today 🔴",
-            message: "Day's almost gone. Even 25 minutes counts. Lock in.",
+            message: "The day is not lost yet. One focused session tonight is enough to keep momentum alive.",
             priority: 2,
             buttons: [{ title: "Last chance — start now" }],
           });
@@ -1878,7 +2047,7 @@ function _doEveningNotification(today) {
             type: "basic",
             iconUrl: "icon128.png",
             title: `${count} session${count > 1 ? "s" : ""} done today 🔥`,
-            message: "Good work. One more before you sleep?",
+            message: "You showed up today. If you still have energy, one more short session can close the day strong.",
             priority: 1,
             buttons: [{ title: "One more session" }],
           });
@@ -1933,13 +2102,13 @@ function checkWeeklyReport() {
         message = `${weekHours}h focused, ${weekSessions} sessions. ${streak > 0 ? streak + "-day streak." : ""} Next week: go 7/7.`;
       } else if (weekSessions >= 3) {
         title = `${activeDays}/7 days this week`;
-        message = `${weekHours}h logged. Good — but you're capable of more. Next week, aim for 5+ active days.`;
+        message = `${weekHours}h logged. You kept the habit alive. Next week, aim for 5+ active days and give it more room to grow.`;
       } else if (weekSessions > 0) {
         title = `Slow week — ${activeDays}/7 days`;
-        message = `${weekHours}h focused. You know what you're capable of. Next week starts tomorrow. Don't wait.`;
+        message = `${weekHours}h focused. The rhythm dipped, but it is still yours to rebuild. Start the new week with one clean session.`;
       } else {
         title = `Zero sessions this week 🔴`;
-        message = `A whole week gone. Your streak reset. But today is Sunday — a new week starts now. Lock in.`;
+        message = `This week got away from you. That's okay. The reset point is now - one focused session can restart the whole system.`;
       }
 
       chrome.notifications.create("weeklyReport", {
@@ -2243,8 +2412,8 @@ function unlockSession() {
       chrome.notifications.create(`sessionDone_${Date.now()}`, {
         type: "basic",
         iconUrl: "icon128.png",
-        title: "Session Complete 🔥",
-        message: `${focusMinutes} min done. Streak: ${currentStreak} day${currentStreak !== 1 ? "s" : ""}. ${intent ? `"${intent.slice(0, 40)}"` : ""}`,
+        title: "Session complete 🔥",
+        message: `${focusMinutes} focused minutes protected. ${currentStreak > 0 ? `Streak: ${currentStreak} day${currentStreak !== 1 ? "s" : ""}. ` : ""}${intent ? `"${intent.slice(0, 40)}"` : "Momentum secured."}`,
         priority: 2,
         buttons: [{ title: "View dashboard" }],
       });
@@ -2349,9 +2518,9 @@ function fireScheduledSession(alarmName) {
         chrome.notifications.create("schedLimitHit", {
           type: "basic",
           iconUrl: "icon128.png",
-          title: "Scheduled session blocked",
+          title: "Scheduled session could not start",
           message:
-            "You've hit today's free limit. Upgrade to Pro for unlimited scheduled sessions.",
+            "Today's free session limit is already used. Upgrade to Pro for unlimited scheduled sessions.",
           priority: 2,
         });
         return;
@@ -2391,8 +2560,8 @@ function fireScheduledSession(alarmName) {
           chrome.notifications.create(`scheduledStart_${schedId}`, {
             type: "basic",
             iconUrl: "icon128.png",
-            title: "🔒 Focus session started",
-            message: `${intent} — ${duration} min. Sites are now blocked.`,
+            title: "Scheduled session is live 🔒",
+            message: `${duration} minutes for "${intent}". Distracting sites are blocked until the session ends.`,
             priority: 2,
             buttons: [{ title: "View session" }],
           });
@@ -2483,8 +2652,8 @@ function checkWeeklyInactivity() {
     chrome.notifications.create({
       type: "basic",
       iconUrl: "icon128.png",
-      title: "DeepLock",
-      message: "You haven't focused in a week. Fix it.",
+      title: "Your focus rhythm needs a restart",
+      message: "It has been a week since your last session. Start small today and get the system moving again.",
       buttons: [{ title: "Start 30 min" }],
     });
     chrome.storage.local.set({ lastReminderTime: now });
@@ -2498,8 +2667,8 @@ function checkInactivity() {
     chrome.notifications.create("inactivityReminder", {
       type: "basic",
       iconUrl: "icon128.png",
-      title: "48 hours. No session.",
-      message: "Builders don't quit. Open DeepLock.",
+      title: "Two days without a lock-in",
+      message: "Momentum gets lighter when you restart small. Open DeepLock and protect one session today.",
       priority: 2,
     });
   });

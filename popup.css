@@ -292,6 +292,51 @@ body {
   margin-bottom: 14px;
 }
 
+.license-card {
+  display: grid;
+  gap: 10px;
+}
+
+.license-input {
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  padding: 14px 16px;
+  outline: none;
+  font: 600 13px/1.4 var(--sans);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+.license-input::placeholder {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.license-input:focus {
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 0 0 4px rgba(255, 77, 77, 0.08);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.license-status {
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.license-status[data-state="success"] {
+  color: var(--success);
+}
+
+.license-status[data-state="error"] {
+  color: #ff9c9c;
+}
+
 .site-row {
   display: flex;
   align-items: center;

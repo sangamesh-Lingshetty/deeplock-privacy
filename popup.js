@@ -17,6 +17,7 @@ init();
 
 function init() {
   bindEvents();
+  refreshProStatusOnOpen();
   hydrateSuggestedIntent();
   loadQuickSites();
   restoreSessionIfActive();
@@ -51,11 +52,88 @@ function bindEvents() {
   document
     .getElementById("moreSitesBtn")
     ?.addEventListener("click", () => openDashboard("sites"));
+  document
+    .getElementById("activateLicenseBtn")
+    ?.addEventListener("click", () => {
+      handleActivateLicense().catch((error) => {
+        console.error("[DeepLock] License activation failed:", error);
+        setLicenseStatus("Activation failed. Try again.", true);
+      });
+    });
 
   document.getElementById("focusIntent")?.addEventListener("input", () => {
     const input = document.getElementById("focusIntent");
     if (input) input.style.borderColor = "";
   });
+}
+
+async function refreshProStatusOnOpen() {
+  try {
+    const pro = await chrome.runtime.sendMessage({ action: "validateLicense" });
+    if (chrome.runtime.lastError) return;
+    await chrome.storage.local.set({
+      isPro: !!pro.isPro,
+      subscriptionPlan: pro.plan || (pro.isPro ? "pro" : "free"),
+      subscriptionStatus: pro.status || (pro.isPro ? "active" : "inactive"),
+      subscriptionSource: pro.source || "",
+      lastProServerSyncAt: Date.now(),
+    });
+
+    if (pro.isPro) {
+      setLicenseStatus("Pro is active on this account.", false);
+    }
+  } catch (_) {
+    // Best-effort refresh only.
+  }
+}
+
+function setLicenseStatus(message, isError = false) {
+  const status = document.getElementById("licenseStatus");
+  if (!status) return;
+  status.textContent = message || "";
+  status.dataset.state = isError ? "error" : "success";
+}
+
+async function handleActivateLicense() {
+  const input = document.getElementById("licenseKeyInput");
+  const licenseKey = input?.value?.trim() || "";
+
+  if (!licenseKey) {
+    setLicenseStatus("Enter your license key.", true);
+    return;
+  }
+
+  const session = await getSession();
+  if (!session) {
+    setLicenseStatus("Sign in first before activating Pro.", true);
+    return;
+  }
+
+  setLicenseStatus("Validating license...", false);
+
+  const result = await validateLicense(licenseKey);
+  if (!result.ok) {
+    setLicenseStatus(result.error, true);
+    return;
+  }
+
+  const saved = await saveLicenseToSupabase(session.userId, result.licenseKey);
+  if (!saved) {
+    setLicenseStatus("License valid, but saving to cloud failed.", true);
+    return;
+  }
+
+  await chrome.storage.local.set({
+    isPro: true,
+    licenseKey: result.licenseKey,
+    licenseValidatedAt: Date.now(),
+    subscriptionPlan: "pro",
+    subscriptionStatus: "active",
+    subscriptionSource: "legacy_license",
+  });
+
+  if (input) input.value = "";
+  setLicenseStatus("Pro activated successfully.", false);
 }
 
 function selectTime(btn) {

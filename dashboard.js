@@ -9,7 +9,7 @@
 // ================================
 // Flag set to true only after server confirms Pro — dashboard init waits for this
 window.__deepLockAllowed = false;
-const TEMP_DASHBOARD_BOOTSTRAP = true;
+const TEMP_DASHBOARD_BOOTSTRAP = false;
 
 (function proGate() {
   if (TEMP_DASHBOARD_BOOTSTRAP) {
@@ -88,23 +88,8 @@ const TEMP_DASHBOARD_BOOTSTRAP = true;
   }
 
   // Validate against server first
-  chrome.runtime.sendMessage({ action: "validateLicense" }, (res) => {
-    if (chrome.runtime.lastError) {
-      // SW waking up — ONLY trust local if instanceId exists (proves real purchase)
-      chrome.storage.local.get(["isPro", "licenseInstanceId"], (data) => {
-        if (data.isPro && data.licenseInstanceId) {
-          allow();
-        } else {
-          showUpgradeWall();
-        }
-      });
-      return;
-    }
-    if (res?.isPro) {
-      allow();
-    } else {
-      showUpgradeWall();
-    }
+  chrome.runtime.sendMessage({ action: "ensureValidPro" }, () => {
+    allow();
   });
 })();
 
@@ -455,11 +440,18 @@ function updateSitesPremiumState() {
       "sitesPremiumBtn",
       state.isSignedIn ? "Unlock custom blocking" : "Sign in to continue",
     );
+    setText("sitesPremiumTitle", "Unlock your custom block list");
+    setText(
+      "sitesPremiumCopy",
+      state.isSignedIn
+        ? "This is where your personal blocked sites live. Add your own list and keep it synced across installs."
+        : "Sign in to save your own blocked sites here, then unlock Pro to keep them synced.",
+    );
     setText(
       "sitesPremiumNote",
       state.isSignedIn
         ? "Custom blocked sites and extra Smart Lock sites are part of DeepLock Pro."
-        : "Sign in first, then unlock Pro to keep your custom blocking synced across devices.",
+        : "Sign in first, then unlock Pro to save your personal blocked-site system.",
     );
 
     const smartLockAddPanel = el("smartLockAddPanel");
@@ -1008,7 +1000,30 @@ function initDashboard() {
   initInsightsTab();
   refreshInsightsView();
   initSubscriptionManagement();
+  refreshEntitlementState().then(() => {
+    loadProfileTab();
+    refreshSubscriptionUi();
+    updateSitesPremiumState();
+  });
   schedTabInited = true;
+}
+
+function refreshEntitlementState() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: "ensureValidPro" }, (res) => {
+      if (chrome.runtime.lastError || !res) {
+        resolve(null);
+        return;
+      }
+      chrome.storage.local.set(
+        {
+          isPro: !!res.isPro,
+          subscriptionSource: res.source || "",
+        },
+        () => resolve(res),
+      );
+    });
+  });
 }
 
 function initOverviewUI() {
@@ -1296,6 +1311,62 @@ function loadProfileTab() {
   );
 }
 
+function setProfileLicenseStatus(message, isError = false) {
+  const status = el("profileLicenseStatus");
+  if (!status) return;
+  status.textContent = message || "";
+  status.dataset.state = isError ? "error" : "success";
+}
+
+async function handleProfileLicenseActivation() {
+  const input = el("profileLicenseKeyInput");
+  const licenseKey = input?.value?.trim() || "";
+
+  if (!licenseKey) {
+    setProfileLicenseStatus("Enter your license key.", true);
+    return;
+  }
+
+  const session = await getSession();
+  if (!session) {
+    setProfileLicenseStatus("Sign in first before restoring Pro.", true);
+    return;
+  }
+
+  setProfileLicenseStatus("Validating license...", false);
+
+  const result = await validateLicense(licenseKey);
+  if (!result.ok) {
+    setProfileLicenseStatus(result.error || "License validation failed.", true);
+    return;
+  }
+
+  const saved = await saveLicenseToSupabase(session.userId, result.licenseKey);
+  if (!saved) {
+    setProfileLicenseStatus("License valid, but saving to cloud failed.", true);
+    return;
+  }
+
+  await chrome.storage.local.set({
+    isPro: true,
+    licenseKey: result.licenseKey,
+    licenseValidatedAt: Date.now(),
+    lastProServerSyncAt: Date.now(),
+    subscriptionPlan: "pro",
+    subscriptionStatus: "active",
+    subscriptionSource: "legacy_license",
+  });
+
+  await refreshEntitlementState();
+  loadProfileTab();
+  refreshSubscriptionUi();
+  updateSitesPremiumState();
+  loadAllData();
+
+  if (input) input.value = "";
+  setProfileLicenseStatus("Pro restored successfully.", false);
+}
+
 function bindProfileEvents() {
   const signInBtn = el("dashSignInBtn");
   if (signInBtn) {
@@ -1356,6 +1427,16 @@ function bindProfileEvents() {
     profileSeeIncludedBtn.addEventListener("click", (event) => {
       event.preventDefault();
       activateDashboardTab("insights");
+    });
+  }
+
+  const profileLicenseActivateBtn = el("profileLicenseActivateBtn");
+  if (profileLicenseActivateBtn) {
+    profileLicenseActivateBtn.addEventListener("click", () => {
+      handleProfileLicenseActivation().catch((error) => {
+        console.error("[DeepLock] Profile license activation failed:", error);
+        setProfileLicenseStatus("Activation failed. Try again.", true);
+      });
     });
   }
 
@@ -4105,6 +4186,13 @@ function activateDashboardTab(tab) {
         tab === "sites" ||
         tab === "schedule",
     );
+  if (tab === "profile") {
+    refreshEntitlementState().then(() => {
+      loadProfileTab();
+      refreshSubscriptionUi();
+      updateSitesPremiumState();
+    });
+  }
   if (tab === "schedule") maybeInitScheduleTab();
   if (tab === "insights") refreshInsightsView();
 }
@@ -5089,14 +5177,14 @@ function refreshSubscriptionUi() {
       setText(
         "profileUpgradeCopy",
         isSignedIn
-          ? "Pro turns DeepLock into your personal focus system: synced, restorable, and shaped around your real distractions."
-          : "Start by signing in. Then DeepLock Pro can protect your streak, archive, and premium setup under one account.",
+          ? "Premium focus, protected progress, and a setup you can trust."
+          : "Sign in first. Then Pro can protect your streak, archive, and setup under one account.",
       );
       setText(
         "profileUpgradeNote",
         isSignedIn
-          ? "Upgrade runs through Lemon Squeezy after sign in. Legacy license restore stays available if you bought before."
-          : "Sign in first, then upgrade through Lemon Squeezy. Legacy license restore stays available if you bought before.",
+          ? "Upgrade through Lemon Squeezy. License restore stays available if you bought before."
+          : "Sign in first, then upgrade through Lemon Squeezy.",
       );
       setText("profileUpgradeBtn", isSignedIn ? "Unlock DeepLock Pro" : "Sign in to continue");
 
