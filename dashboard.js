@@ -2703,6 +2703,8 @@ function bindHistoryEvents() {
   });
 
   const customWrap = el("historyCustomWrap");
+  const customNote = el("historyCustomNote");
+  const customMinutesInput = el("historyCustomMinutes");
   const durationChips = Array.from(document.querySelectorAll(".history-duration-chip"));
   durationChips.forEach((chip) => {
     chip.addEventListener("click", () => {
@@ -2711,8 +2713,23 @@ function bindHistoryEvents() {
       if (customWrap) {
         customWrap.style.display = chip.dataset.min === "custom" ? "inline-flex" : "none";
       }
+      if (customNote) {
+        customNote.style.display = chip.dataset.min === "custom" ? "block" : "none";
+      }
     });
   });
+
+  if (customMinutesInput) {
+    const normalizeCustomMinutes = () => {
+      const next = Math.max(
+        5,
+        Math.min(240, parseInt(customMinutesInput.value || "50", 10) || 50),
+      );
+      customMinutesInput.value = String(next);
+    };
+    customMinutesInput.addEventListener("blur", normalizeCustomMinutes);
+    customMinutesInput.addEventListener("change", normalizeCustomMinutes);
+  }
 
   const moreSitesBtn = el("historyMoreSitesBtn");
   if (moreSitesBtn) {
@@ -2724,7 +2741,7 @@ function bindHistoryEvents() {
     startBtn.addEventListener("click", () => {
       const activeChip = document.querySelector(".history-duration-chip.active");
       const customMinutes = Math.max(
-        1,
+        5,
         Math.min(240, parseInt(el("historyCustomMinutes")?.value || "50", 10) || 50),
       );
       const duration =
@@ -2738,6 +2755,13 @@ function bindHistoryEvents() {
       if (!intent) {
         if (msg) msg.textContent = "Add what you're working on before starting.";
         if (intentInput) intentInput.focus();
+        return;
+      }
+
+      if (activeChip?.dataset.min === "custom" && customMinutes < 5) {
+        if (msg) msg.textContent = "Custom sessions must be at least 5 minutes.";
+        const customInput = el("historyCustomMinutes");
+        if (customInput) customInput.focus();
         return;
       }
 

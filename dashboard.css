@@ -1836,6 +1836,12 @@ body {
   color: var(--muted2);
 }
 
+.history-custom-note {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted2);
+}
+
 .history-summary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
